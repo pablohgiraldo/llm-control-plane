@@ -1,0 +1,36 @@
+openapi: 3.0.3
+info:
+  title: LLM Control Plane - API
+  version: 0.1.0
+  description: Governance-first API proxying to multiple LLM providers.
+servers:
+  - url: https://api.example.com
+paths:
+  /v1/llm/complete:
+    post:
+      summary: Proxy a completion request through governance pipeline
+      description: Auth → Prompt Validation → Policy → Routing → Audit/Metrics → Provider
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                prompt:
+                  type: string
+                model:
+                  type: string
+              required: [prompt]
+      responses:
+        '200':
+          description: Completion response
+        '400':
+          description: Validation error
+        '401':
+          description: Unauthorized
+        '429':
+          description: Rate/Quota exceeded
+        '500':
+          description: Internal error
+

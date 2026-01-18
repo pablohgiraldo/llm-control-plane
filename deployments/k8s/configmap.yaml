@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: llmcp-config
+data:
+  ENV: "prod"
+  REDIS_ADDR: "llmcp-redis:6379"
+  POSTGRES_DSN: "postgres://llmcp:llmcp@llmcp-postgres:5432/llmcp?sslmode=disable"
+

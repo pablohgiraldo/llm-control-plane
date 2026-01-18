@@ -1,0 +1,25 @@
+# OS / Editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Go
+bin/
+dist/
+coverage.out
+*.test
+
+# Dependencies and build
+/vendor/
+/build/
+/out/
+
+# Logs
+*.log
+/logs/
+
+# Secrets (never commit real secrets)
+.env
+.env.*
+
