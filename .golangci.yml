@@ -1,0 +1,252 @@
+# golangci-lint configuration
+# Enterprise-grade linting for Go projects
+# Version: 1.61.0+
+
+run:
+  timeout: 5m
+  issues-exit-code: 1
+  tests: true
+  skip-dirs:
+    - vendor
+    - frontend
+    - docs
+  skip-files:
+    - ".*\\.pb\\.go$"
+    - ".*_gen\\.go$"
+  modules-download-mode: readonly
+
+output:
+  formats:
+    - format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
+  uniq-by-line: true
+  sort-results: true
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+    exclude-functions:
+      - (io.Closer).Close
+      - (*database/sql.Rows).Close
+
+  govet:
+    enable-all: true
+    disable:
+      - shadow
+      - fieldalignment
+
+  gofmt:
+    simplify: true
+
+  goimports:
+    local-prefixes: github.com/upb/llm-control-plane
+
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - experimental
+      - opinionated
+      - performance
+      - style
+    disabled-checks:
+      - whyNoLint
+      - unnamedResult
+
+  gocyclo:
+    min-complexity: 15
+
+  dupl:
+    threshold: 100
+
+  goconst:
+    min-len: 3
+    min-occurrences: 3
+    ignore-tests: true
+
+  misspell:
+    locale: US
+    ignore-words:
+      - cancelled
+
+  lll:
+    line-length: 120
+    tab-width: 4
+
+  unparam:
+    check-exported: false
+
+  nakedret:
+    max-func-lines: 30
+
+  prealloc:
+    simple: true
+    range-loops: true
+    for-loops: false
+
+  nolintlint:
+    allow-unused: false
+    require-explanation: true
+    require-specific: true
+
+  revive:
+    ignore-generated-header: true
+    severity: warning
+    rules:
+      - name: blank-imports
+      - name: context-as-argument
+      - name: context-keys-type
+      - name: dot-imports
+      - name: error-return
+      - name: error-strings
+      - name: error-naming
+      - name: exported
+      - name: if-return
+      - name: increment-decrement
+      - name: var-naming
+      - name: var-declaration
+      - name: package-comments
+      - name: range
+      - name: receiver-naming
+      - name: time-naming
+      - name: unexported-return
+      - name: indent-error-flow
+      - name: errorf
+      - name: empty-block
+      - name: superfluous-else
+      - name: unused-parameter
+      - name: unreachable-code
+      - name: redefines-builtin-id
+
+  gosec:
+    severity: medium
+    confidence: medium
+    excludes:
+      - G104  # Audit errors not checked (covered by errcheck)
+      - G304  # File path from variable (needed for config files)
+    config:
+      global:
+        nosec: false
+        show-ignored: false
+        audit: true
+
+  staticcheck:
+    checks:
+      - all
+      - -SA1019  # Deprecated functions (we'll handle these explicitly)
+
+  stylecheck:
+    checks:
+      - all
+      - -ST1000  # Package comments (handled by revive)
+      - -ST1003  # Underscores in names (sometimes needed for constants)
+
+  unused:
+    check-exported: false
+
+  whitespace:
+    multi-if: false
+    multi-func: false
+
+  wsl:
+    strict-append: true
+    allow-assign-and-call: true
+    allow-multiline-assign: true
+    allow-cuddle-declarations: false
+    allow-trailing-comment: false
+    force-case-trailing-whitespace: 0
+    force-err-cuddling: false
+    allow-separated-leading-comment: false
+
+linters:
+  disable-all: true
+  enable:
+    # Enabled by default
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - typecheck
+    - unused
+
+    # Additional linters
+    - bodyclose
+    - dupl
+    - gochecknoinits
+    - goconst
+    - gocritic
+    - gocyclo
+    - gofmt
+    - goimports
+    - goprintffuncname
+    - gosec
+    - misspell
+    - nakedret
+    - nolintlint
+    - prealloc
+    - revive
+    - stylecheck
+    - unconvert
+    - unparam
+    - whitespace
+    - wsl
+
+  # Disabled linters (can be enabled later)
+  # - cyclop           # Too strict for initial setup
+  # - exhaustive       # Requires exhaustive switch statements
+  # - exhaustruct      # Requires all struct fields
+  # - forbidigo        # Custom forbidden identifiers
+  # - funlen           # Function length (covered by gocyclo)
+  # - gocognit         # Cognitive complexity (covered by gocyclo)
+  # - godot            # Comment periods (too opinionated)
+  # - godox            # TODO/FIXME detection (we want these during dev)
+  # - gomnd            # Magic numbers (too noisy)
+  # - nestif           # Nested if depth (covered by gocyclo)
+  # - nlreturn         # Newline before return (too opinionated)
+  # - testpackage      # Separate test packages (not always needed)
+  # - wrapcheck        # Wrap errors (we do this manually)
+
+issues:
+  exclude-rules:
+    # Exclude some linters from running on tests files
+    - path: _test\.go
+      linters:
+        - gocyclo
+        - errcheck
+        - dupl
+        - gosec
+        - goconst
+
+    # Exclude known linters from partially hard-vendored code
+    - path: backend/internal/
+      text: "weak cryptographic primitive"
+      linters:
+        - gosec
+
+    # Exclude shadow checking on err variable
+    - linters:
+        - govet
+      text: 'shadow: declaration of "err"'
+
+    # Exclude lll issues for long lines with go:generate
+    - linters:
+        - lll
+      source: "^//go:generate "
+
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  new: false
+  fix: false
+
+severity:
+  default-severity: error
+  case-sensitive: false
+  rules:
+    - linters:
+        - dupl
+        - goconst
+        - misspell
+      severity: warning
