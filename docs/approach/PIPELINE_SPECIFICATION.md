@@ -104,12 +104,7 @@
 │  Output: SelectedProvider + ProviderConfig                      │
 └────────────────────┬────────────────────────────────────────────┘
                      │
-                     ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                 STAGE 10: CIRCUIT BREAKER                       │
-│  AWS: ElastiCache Redis (circuit breaker state)                 │
-│  Input: SelectedProvider                                        │
-│  Output: HealthyProvider OR fallback_provider                   │
+                     │
 └────────────────────┬────────────────────────────────────────────┘
                      │
                      ▼
@@ -129,13 +124,6 @@
 │  Output: InspectedResponse + ValidationReport                   │
 └────────────────────┬────────────────────────────────────────────┘
                      │
-                     ▼
-┌─────────────────────────────────────────────────────────────────┐
-│               STAGE 13: CACHE STORE (ASYNC)                     │
-│  AWS: ElastiCache Redis + SQS (async queue)                     │
-│  Input: NormalizedRequest + InspectedResponse                   │
-│  Output: cache_stored (non-blocking)                            │
-└────────────────────┬────────────────────────────────────────────┘
                      │
                      ▼
 ┌─────────────────────────────────────────────────────────────────┐
@@ -160,13 +148,16 @@
 ### 1.2 Critical Path vs. Async Stages
 
 **Synchronous (blocks response):**
+
 - Stages 1-12: Must complete before response
 
 **Asynchronous (non-blocking):**
+
 - Stage 13: Cache Store
 - Stage 14: Audit Logging
 
 **Early Exit Points:**
+
 - Stage 1: Authentication failure → 401 Unauthorized
 - Stage 4: Authorization denied → 403 Forbidden
 - Stage 5: Cache hit → Skip to Stage 15
@@ -196,46 +187,46 @@ type RequestContext struct {
     Timestamp       time.Time
     ClientIP        string
     UserAgent       string
-    
+
     // Authentication (Stage 1)
     JWTClaims       *JWTClaims
-    
+
     // Tenant identification (Stage 2)
     TenantContext   *TenantContext
-    
+
     // Normalization (Stage 3)
     NormalizedRequest *NormalizedRequest
     IntentMetadata    *IntentMetadata
-    
+
     // Policy resolution (Stage 4)
     ResolvedPolicies  *ResolvedPolicies
     AuthzDecision     *AuthorizationDecision
-    
+
     // Cache check (Stage 5)
     CacheResult       *CacheResult
-    
+
     // Budget & rate check (Stage 6)
     QuotaCheck        *QuotaCheckResult
-    
+
     // Validation (Stage 7)
     ValidationResult  *ValidationResult
-    
+
     // Content filtering (Stage 8)
     FilteredRequest   *FilteredRequest
-    
+
     // Provider routing (Stage 9)
     SelectedProvider  *ProviderSelection
-    
+
     // Circuit breaker (Stage 10)
     ProviderHealth    *ProviderHealthStatus
-    
+
     // LLM invocation (Stage 11)
     LLMResponse       *LLMResponse
     UsageMetrics      *UsageMetrics
-    
+
     // Response inspection (Stage 12)
     InspectedResponse *InspectedResponse
-    
+
     // Audit trail
     StageTimings      map[string]time.Duration
     StageDecisions    map[string]interface{}
@@ -265,12 +256,14 @@ func WithContext(ctx context.Context, rc *RequestContext) context.Context {
 **AWS Services:** Cognito User Pools
 
 **Responsibilities:**
+
 - Validate JWT token signature using Cognito JWKS
 - Extract and verify JWT claims (issuer, audience, expiration)
 - Ensure token has not been revoked
 - Extract user identity and role
 
 **Entry Contract:**
+
 ```go
 type Stage1Input struct {
     HTTPRequest *http.Request
@@ -280,6 +273,7 @@ type Stage1Input struct {
 ```
 
 **Exit Contract:**
+
 ```go
 type Stage1Output struct {
     JWTClaims *JWTClaims
@@ -302,6 +296,7 @@ type JWTClaims struct {
 ```
 
 **AWS Integration:**
+
 ```go
 // Fetch Cognito JWKS for JWT validation
 jwksURL := fmt.Sprintf(
@@ -320,6 +315,7 @@ jwksURL := fmt.Sprintf(
 | `AUTH_JWKS_FETCH_FAILED` | 503 | Cannot fetch Cognito public keys | Yes (retry) |
 
 **Boundary:**
+
 - **IN:** Raw HTTP request from API Gateway
 - **OUT:** Validated JWT claims
 - **Does NOT:** Authorize actions (that's Stage 4)
@@ -332,11 +328,13 @@ jwksURL := fmt.Sprintf(
 **AWS Services:** None (in-memory processing)
 
 **Responsibilities:**
+
 - Extract organization, application, and user identifiers from JWT
 - Build tenant context for downstream stages
 - Validate tenant identifiers exist
 
 **Entry Contract:**
+
 ```go
 type Stage2Input struct {
     JWTClaims *JWTClaims
@@ -344,6 +342,7 @@ type Stage2Input struct {
 ```
 
 **Exit Contract:**
+
 ```go
 type Stage2Output struct {
     TenantContext *TenantContext
@@ -356,7 +355,7 @@ type TenantContext struct {
     UserID           string
     UserRole         string
     UserEmail        string
-    
+
     // Optional metadata
     ServiceProviderID string // For multi-tenant mode
     TenantDatabaseName string // For database-per-tenant mode
@@ -371,6 +370,7 @@ type TenantContext struct {
 | `TENANT_INVALID_FORMAT` | 400 | Tenant ID format invalid | No |
 
 **Boundary:**
+
 - **IN:** JWT claims
 - **OUT:** Structured tenant context
 - **Does NOT:** Validate tenant exists in database (assumed valid if JWT is valid)
@@ -383,6 +383,7 @@ type TenantContext struct {
 **AWS Services:** None (in-memory processing)
 
 **Responsibilities:**
+
 - Parse and validate request body structure
 - Normalize different API formats (chat, embeddings, completions)
 - Classify request intent (conversational, retrieval, code generation, etc.)
@@ -390,6 +391,7 @@ type TenantContext struct {
 - Extract key request parameters
 
 **Entry Contract:**
+
 ```go
 type Stage3Input struct {
     RawRequestBody []byte
@@ -399,6 +401,7 @@ type Stage3Input struct {
 ```
 
 **Exit Contract:**
+
 ```go
 type Stage3Output struct {
     NormalizedRequest *NormalizedRequest
@@ -443,11 +446,12 @@ type IntentMetadata struct {
 ```
 
 **Classification Logic:**
+
 ```go
 func ClassifyIntent(request *NormalizedRequest) string {
     // Keyword-based classification
     prompt := extractPromptText(request)
-    
+
     if containsCodeKeywords(prompt) {
         return "code_generation"
     } else if containsDataKeywords(prompt) {
@@ -462,7 +466,7 @@ func ClassifyIntent(request *NormalizedRequest) string {
 func DetermineSensitivity(request *NormalizedRequest) string {
     // Pattern-based sensitivity detection
     prompt := extractPromptText(request)
-    
+
     if containsPII(prompt) || containsFinancialData(prompt) {
         return "restricted"
     } else if containsInternalTerms(prompt) {
@@ -483,6 +487,7 @@ func DetermineSensitivity(request *NormalizedRequest) string {
 | `NORM_TOKEN_LIMIT_EXCEEDED` | 400 | Estimated tokens > max allowed | No |
 
 **Boundary:**
+
 - **IN:** Raw request body
 - **OUT:** Normalized, structured request + metadata
 - **Does NOT:** Modify prompt content (that's Stage 7-8)
@@ -492,11 +497,13 @@ func DetermineSensitivity(request *NormalizedRequest) string {
 
 ### STAGE 4: POLICY RESOLUTION & AUTHORIZATION
 
-**AWS Services:** 
+**AWS Services:**
+
 - Aurora PostgreSQL (policy storage)
 - ElastiCache Redis (policy caching)
 
 **Responsibilities:**
+
 - Fetch applicable policies for tenant (org → app → user hierarchy)
 - Resolve policy conflicts (most restrictive wins)
 - Check RBAC permissions for requested operation
@@ -504,6 +511,7 @@ func DetermineSensitivity(request *NormalizedRequest) string {
 - Calculate estimated cost for quota checks
 
 **Entry Contract:**
+
 ```go
 type Stage4Input struct {
     TenantContext     *TenantContext
@@ -513,6 +521,7 @@ type Stage4Input struct {
 ```
 
 **Exit Contract:**
+
 ```go
 type Stage4Output struct {
     ResolvedPolicies *ResolvedPolicies
@@ -529,7 +538,7 @@ type ResolvedPolicies struct {
         TokensPerMinute   int
         TokensPerDay      int
     }
-    
+
     // Cost control policies
     CostCaps struct {
         MonthlyBudgetUSD  float64
@@ -537,7 +546,7 @@ type ResolvedPolicies struct {
         PerRequestMaxUSD  float64
         AlertThreshold    float64 // e.g., 0.8 = 80% of budget
     }
-    
+
     // Model restrictions
     ModelRestrictions struct {
         AllowedModels   []string // e.g., ["gpt-4", "claude-3-opus"]
@@ -545,7 +554,7 @@ type ResolvedPolicies struct {
         AllowedProviders []string // e.g., ["openai", "anthropic"]
         BlockedProviders []string
     }
-    
+
     // Content policies
     ContentPolicies struct {
         BlockPII            bool
@@ -556,17 +565,17 @@ type ResolvedPolicies struct {
         MaxPromptLength     int
         MaxResponseLength   int
     }
-    
+
     // Time-based restrictions
     TimeRestrictions struct {
         AllowedHours []int // 0-23, empty = always allowed
         AllowedDays  []string // "monday", "tuesday", etc.
         Timezone     string
     }
-    
+
     // Priority/QoS
     Priority int // 0 = low, 1 = normal, 2 = high, 3 = critical
-    
+
     // Metadata
     PolicySources []string // Which policies were applied (for audit)
 }
@@ -580,6 +589,7 @@ type AuthorizationDecision struct {
 ```
 
 **AWS Integration:**
+
 ```go
 // PostgreSQL query (with Redis caching)
 func (r *PolicyRepository) GetPoliciesForTenant(
@@ -591,7 +601,7 @@ func (r *PolicyRepository) GetPoliciesForTenant(
     if cached := redis.Get(ctx, cacheKey); cached != nil {
         return parseCachedPolicies(cached), nil
     }
-    
+
     // Fetch from PostgreSQL (hierarchy: org > app > user)
     query := `
         SELECT policy_type, config
@@ -599,22 +609,23 @@ func (r *PolicyRepository) GetPoliciesForTenant(
         WHERE (org_id = $1 AND app_id IS NULL AND user_id IS NULL)
            OR (org_id = $1 AND app_id = $2 AND user_id IS NULL)
            OR (org_id = $1 AND app_id = $2 AND user_id = $3)
-        ORDER BY 
-            CASE 
+        ORDER BY
+            CASE
                 WHEN user_id IS NOT NULL THEN 3
                 WHEN app_id IS NOT NULL THEN 2
                 ELSE 1
             END
     `
-    
+
     rows, err := r.db.QueryContext(ctx, query, orgID, appID, userID)
     // ... merge policies, cache for 5 minutes
-    
+
     return policies, nil
 }
 ```
 
 **Policy Resolution Logic:**
+
 ```
 1. Fetch org-level policies (baseline)
 2. Fetch app-level policies (override org)
@@ -633,6 +644,7 @@ func (r *PolicyRepository) GetPoliciesForTenant(
 | `POLICY_FETCH_FAILED` | 503 | Database/cache error | Yes (retry) |
 
 **Boundary:**
+
 - **IN:** Tenant context + normalized request
 - **OUT:** Resolved policies + authorization decision
 - **Does NOT:** Enforce quotas (that's Stage 6)
@@ -645,12 +657,14 @@ func (r *PolicyRepository) GetPoliciesForTenant(
 **AWS Services:** ElastiCache Redis
 
 **Responsibilities:**
+
 - Generate cache key from request parameters
 - Check if identical request has been cached
 - Return cached response if valid (TTL not expired)
 - Skip to Stage 15 if cache hit
 
 **Entry Contract:**
+
 ```go
 type Stage5Input struct {
     TenantContext     *TenantContext
@@ -659,6 +673,7 @@ type Stage5Input struct {
 ```
 
 **Exit Contract:**
+
 ```go
 type Stage5Output struct {
     CacheResult *CacheResult
@@ -674,6 +689,7 @@ type CacheResult struct {
 ```
 
 **Cache Key Generation:**
+
 ```go
 func GenerateCacheKey(tenant *TenantContext, req *NormalizedRequest) string {
     // Include all parameters that affect response
@@ -692,7 +708,7 @@ func GenerateCacheKey(tenant *TenantContext, req *NormalizedRequest) string {
         Temperature: req.Parameters.Temperature,
         MaxTokens:   req.Parameters.MaxTokens,
     }
-    
+
     // Hash to 64-character key
     hash := sha256.Sum256([]byte(json.Marshal(keyData)))
     return fmt.Sprintf("cache:response:%x", hash)
@@ -700,6 +716,7 @@ func GenerateCacheKey(tenant *TenantContext, req *NormalizedRequest) string {
 ```
 
 **AWS Integration:**
+
 ```go
 // Redis GET
 cacheKey := GenerateCacheKey(tenant, request)
@@ -723,6 +740,7 @@ return &CacheResult{
 ```
 
 **Cache Policy:**
+
 ```
 TTL: 1 hour (configurable per org)
 Eviction: LRU (least recently used)
@@ -736,6 +754,7 @@ Invalidation: On policy change (via pub/sub)
 | `CACHE_READ_ERROR` | (none) | Redis connection failed | Yes (continue without cache) |
 
 **Boundary:**
+
 - **IN:** Normalized request
 - **OUT:** Cached response OR cache miss
 - **Does NOT:** Call LLM if cache hit
@@ -745,11 +764,13 @@ Invalidation: On policy change (via pub/sub)
 
 ### STAGE 6: BUDGET & RATE PRE-CHECK
 
-**AWS Services:** 
+**AWS Services:**
+
 - ElastiCache Redis (rate limiting counters, sliding window)
 - Aurora PostgreSQL (cost tracking, budget queries)
 
 **Responsibilities:**
+
 - Check rate limits (requests per minute/hour/day)
 - Check token limits
 - Estimate request cost
@@ -757,6 +778,7 @@ Invalidation: On policy change (via pub/sub)
 - Increment rate limit counters (pre-commit)
 
 **Entry Contract:**
+
 ```go
 type Stage6Input struct {
     TenantContext     *TenantContext
@@ -767,6 +789,7 @@ type Stage6Input struct {
 ```
 
 **Exit Contract:**
+
 ```go
 type Stage6Output struct {
     QuotaCheck *QuotaCheckResult
@@ -781,7 +804,7 @@ type QuotaCheckResult struct {
         ResetAt           time.Time
         WindowType        string // "minute", "hour", "day"
     }
-    
+
     // Cost estimation
     CostEstimate struct {
         EstimatedCostUSD  float64
@@ -789,7 +812,7 @@ type QuotaCheckResult struct {
         RemainingBudget   float64
         WouldExceedBudget bool
     }
-    
+
     // Quota decisions
     Allowed          bool
     DenialReason     string
@@ -798,6 +821,7 @@ type QuotaCheckResult struct {
 ```
 
 **AWS Integration (Rate Limiting with Redis):**
+
 ```go
 // Sliding window rate limiting using Redis ZSET
 func (s *RateLimitService) CheckRateLimit(
@@ -809,39 +833,40 @@ func (s *RateLimitService) CheckRateLimit(
     key := fmt.Sprintf("rate_limit:%s:%s:%s", orgID, appID, window.String())
     now := time.Now().Unix()
     windowStart := now - int64(window.Seconds())
-    
+
     // Redis pipeline for atomicity
     pipe := s.redis.Pipeline()
-    
+
     // Remove old entries outside window
     pipe.ZRemRangeByScore(ctx, key, "0", strconv.FormatInt(windowStart, 10))
-    
+
     // Add current request
     requestID := fmt.Sprintf("%d-%s", now, uuid.New().String())
     pipe.ZAdd(ctx, key, &redis.Z{
         Score:  float64(now),
         Member: requestID,
     })
-    
+
     // Count requests in window
     countCmd := pipe.ZCount(ctx, key, strconv.FormatInt(windowStart, 10), "+inf")
-    
+
     // Set TTL
     pipe.Expire(ctx, key, window)
-    
+
     _, err := pipe.Exec(ctx)
     if err != nil {
         return false, 0, err
     }
-    
+
     count, _ := countCmd.Result()
     remaining := limit - int(count)
-    
+
     return count <= int64(limit), remaining, nil
 }
 ```
 
 **AWS Integration (Cost Tracking with Aurora):**
+
 ```go
 func (s *BudgetService) CheckBudget(
     ctx context.Context,
@@ -855,26 +880,27 @@ func (s *BudgetService) CheckBudget(
         WHERE org_id = $1
           AND timestamp >= date_trunc('month', NOW())
     `
-    
+
     var monthSpend float64
     err := s.db.QueryRowContext(ctx, query, orgID).Scan(&monthSpend)
     if err != nil {
         return false, 0, err
     }
-    
+
     // Get monthly budget from policies
     budget := s.policies.CostCaps.MonthlyBudgetUSD
-    
+
     // Check if request would exceed budget
     projectedSpend := monthSpend + estimatedCost
     allowed := projectedSpend <= budget
     remaining := budget - monthSpend
-    
+
     return allowed, remaining, nil
 }
 ```
 
 **Cost Estimation:**
+
 ```go
 func EstimateCost(model string, inputTokens, outputTokens int) float64 {
     pricing := map[string]struct{ Input, Output float64 }{
@@ -883,11 +909,11 @@ func EstimateCost(model string, inputTokens, outputTokens int) float64 {
         "gpt-3.5-turbo": {Input: 0.5, Output: 1.5},
         "claude-3-opus": {Input: 15.0, Output: 75.0},
     }
-    
+
     price := pricing[model]
     inputCost := float64(inputTokens) / 1_000_000 * price.Input
     outputCost := float64(outputTokens) / 1_000_000 * price.Output
-    
+
     return inputCost + outputCost
 }
 ```
@@ -901,6 +927,7 @@ func EstimateCost(model string, inputTokens, outputTokens int) float64 {
 | `QUOTA_SERVICE_ERROR` | 503 | Redis/DB connection failed | Yes (retry) |
 
 **Boundary:**
+
 - **IN:** Tenant context + policies + request
 - **OUT:** Quota check result (allowed/denied)
 - **Does NOT:** Charge actual cost (that's Stage 14)
@@ -910,11 +937,13 @@ func EstimateCost(model string, inputTokens, outputTokens int) float64 {
 
 ### STAGE 7: PRE-PROCESSING VALIDATION
 
-**AWS Services:** 
+**AWS Services:**
+
 - None (in-memory regex)
 - Optional: Amazon Comprehend (for ML-based PII detection)
 
 **Responsibilities:**
+
 - Detect PII (names, emails, SSNs, phone numbers, addresses)
 - Detect secrets (API keys, passwords, connection strings)
 - Detect prompt injection patterns
@@ -922,6 +951,7 @@ func EstimateCost(model string, inputTokens, outputTokens int) float64 {
 - Generate validation report
 
 **Entry Contract:**
+
 ```go
 type Stage7Input struct {
     NormalizedRequest *NormalizedRequest
@@ -930,6 +960,7 @@ type Stage7Input struct {
 ```
 
 **Exit Contract:**
+
 ```go
 type Stage7Output struct {
     ValidationResult *ValidationResult
@@ -956,6 +987,7 @@ type Violation struct {
 ```
 
 **Detection Patterns:**
+
 ```go
 var piiPatterns = map[string]*regexp.Regexp{
     "email":        regexp.MustCompile(`\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b`),
@@ -982,10 +1014,11 @@ var injectionPatterns = map[string]*regexp.Regexp{
 ```
 
 **Validation Logic:**
+
 ```go
 func ValidatePrompt(prompt string, policies *ResolvedPolicies) *ValidationResult {
     violations := []Violation{}
-    
+
     // Check PII
     if policies.ContentPolicies.BlockPII {
         for piiType, pattern := range piiPatterns {
@@ -1001,7 +1034,7 @@ func ValidatePrompt(prompt string, policies *ResolvedPolicies) *ValidationResult
             }
         }
     }
-    
+
     // Check secrets
     if policies.ContentPolicies.BlockSecrets {
         for secretType, pattern := range secretPatterns {
@@ -1017,7 +1050,7 @@ func ValidatePrompt(prompt string, policies *ResolvedPolicies) *ValidationResult
             }
         }
     }
-    
+
     // Check prompt injection
     if policies.ContentPolicies.BlockPromptInjection {
         for injectionType, pattern := range injectionPatterns {
@@ -1033,7 +1066,7 @@ func ValidatePrompt(prompt string, policies *ResolvedPolicies) *ValidationResult
             }
         }
     }
-    
+
     // Determine action
     action := "allow"
     if hasBlockableViolation(violations) {
@@ -1041,7 +1074,7 @@ func ValidatePrompt(prompt string, policies *ResolvedPolicies) *ValidationResult
     } else if hasRedactableViolation(violations) {
         action = "redact"
     }
-    
+
     return &ValidationResult{
         Valid:      len(violations) == 0 || action == "redact",
         Violations: violations,
@@ -1051,6 +1084,7 @@ func ValidatePrompt(prompt string, policies *ResolvedPolicies) *ValidationResult
 ```
 
 **Redaction:**
+
 ```go
 func RedactPrompt(prompt string, violations []Violation) string {
     redacted := prompt
@@ -1064,10 +1098,11 @@ func RedactPrompt(prompt string, violations []Violation) string {
 ```
 
 **Optional: AWS Comprehend Integration:**
+
 ```go
 func DetectPIIWithComprehend(ctx context.Context, text string) ([]Violation, error) {
     client := comprehend.NewFromConfig(cfg)
-    
+
     result, err := client.DetectPiiEntities(ctx, &comprehend.DetectPiiEntitiesInput{
         Text:         aws.String(text),
         LanguageCode: types.LanguageCodeEn,
@@ -1075,7 +1110,7 @@ func DetectPIIWithComprehend(ctx context.Context, text string) ([]Violation, err
     if err != nil {
         return nil, err
     }
-    
+
     violations := []Violation{}
     for _, entity := range result.Entities {
         violations = append(violations, Violation{
@@ -1085,7 +1120,7 @@ func DetectPIIWithComprehend(ctx context.Context, text string) ([]Violation, err
             Severity:   "high",
         })
     }
-    
+
     return violations, nil
 }
 ```
@@ -1099,6 +1134,7 @@ func DetectPIIWithComprehend(ctx context.Context, text string) ([]Violation, err
 | `VALIDATE_PROMPT_TOO_LONG` | 400 | Exceeds max prompt length | No |
 
 **Boundary:**
+
 - **IN:** Normalized request + policies
 - **OUT:** Validation result + redacted prompt
 - **Does NOT:** Apply business rules (that's Stage 8)
@@ -1111,6 +1147,7 @@ func DetectPIIWithComprehend(ctx context.Context, text string) ([]Violation, err
 **AWS Services:** None (in-memory policy evaluation)
 
 **Responsibilities:**
+
 - Apply business-specific content policies
 - Filter blocked topics/keywords
 - Enforce allowed use cases
@@ -1118,6 +1155,7 @@ func DetectPIIWithComprehend(ctx context.Context, text string) ([]Violation, err
 - Generate filtered request
 
 **Entry Contract:**
+
 ```go
 type Stage8Input struct {
     ValidationResult  *ValidationResult
@@ -1127,6 +1165,7 @@ type Stage8Input struct {
 ```
 
 **Exit Contract:**
+
 ```go
 type Stage8Output struct {
     FilteredRequest *FilteredRequest
@@ -1148,13 +1187,14 @@ type FilterAction struct {
 ```
 
 **Filtering Logic:**
+
 ```go
 func ApplyContentFilters(
     request *NormalizedRequest,
     policies *ResolvedPolicies,
 ) (*FilteredRequest, error) {
     actions := []FilterAction{}
-    
+
     // Check allowed topics
     if len(policies.ContentPolicies.AllowedTopics) > 0 {
         if !containsAllowedTopic(request, policies.ContentPolicies.AllowedTopics) {
@@ -1164,7 +1204,7 @@ func ApplyContentFilters(
             }
         }
     }
-    
+
     // Check blocked topics
     if len(policies.ContentPolicies.BlockedTopics) > 0 {
         if containsBlockedTopic(request, policies.ContentPolicies.BlockedTopics) {
@@ -1174,7 +1214,7 @@ func ApplyContentFilters(
             }
         }
     }
-    
+
     // Check time restrictions
     if !isWithinAllowedTime(policies.TimeRestrictions) {
         return nil, &StageError{
@@ -1182,7 +1222,7 @@ func ApplyContentFilters(
             Message: "Requests not allowed during this time",
         }
     }
-    
+
     return &FilteredRequest{
         Request:       request,
         FilterActions: actions,
@@ -1198,6 +1238,7 @@ func ApplyContentFilters(
 | `FILTER_TIME_RESTRICTED` | 403 | Outside allowed time window | Yes (retry later) |
 
 **Boundary:**
+
 - **IN:** Validated, redacted request + policies
 - **OUT:** Filtered request ready for LLM
 - **Does NOT:** Call LLM (that's Stage 11)
@@ -1207,11 +1248,13 @@ func ApplyContentFilters(
 
 ### STAGE 9: PROVIDER ROUTING
 
-**AWS Services:** 
+**AWS Services:**
+
 - Secrets Manager (provider credentials)
 - None (in-memory routing logic)
 
 **Responsibilities:**
+
 - Select appropriate LLM provider based on model request
 - Apply routing policies (cost optimization, latency, availability)
 - Fetch provider credentials from Secrets Manager
@@ -1219,6 +1262,7 @@ func ApplyContentFilters(
 - Select fallback providers
 
 **Entry Contract:**
+
 ```go
 type Stage9Input struct {
     FilteredRequest  *FilteredRequest
@@ -1228,6 +1272,7 @@ type Stage9Input struct {
 ```
 
 **Exit Contract:**
+
 ```go
 type Stage9Output struct {
     SelectedProvider *ProviderSelection
@@ -1253,6 +1298,7 @@ type ProviderCredentials struct {
 ```
 
 **Routing Logic:**
+
 ```go
 func SelectProvider(
     request *FilteredRequest,
@@ -1267,14 +1313,14 @@ func SelectProvider(
             }
         }
     }
-    
+
     if len(candidates) == 0 {
         return nil, &StageError{
             Code:    "ROUTE_NO_PROVIDER",
             Message: fmt.Sprintf("No provider supports model: %s", request.Request.Model),
         }
     }
-    
+
     // 2. Apply routing strategy
     var selected string
     switch getRoutingStrategy(policies) {
@@ -1287,13 +1333,13 @@ func SelectProvider(
     default:
         selected = candidates[0] // First available
     }
-    
+
     // 3. Fetch credentials from Secrets Manager
     creds, err := fetchProviderCredentials(selected)
     if err != nil {
         return nil, err
     }
-    
+
     // 4. Prepare fallbacks
     fallbacks := []string{}
     for _, c := range candidates {
@@ -1301,7 +1347,7 @@ func SelectProvider(
             fallbacks = append(fallbacks, c)
         }
     }
-    
+
     return &ProviderSelection{
         ProviderName:      selected,
         Model:             request.Request.Model,
@@ -1314,10 +1360,11 @@ func SelectProvider(
 ```
 
 **AWS Integration (Secrets Manager):**
+
 ```go
 func fetchProviderCredentials(provider string) (*ProviderCredentials, error) {
     client := secretsmanager.NewFromConfig(cfg)
-    
+
     secretName := fmt.Sprintf("/llm-cp/%s/providers", os.Getenv("ENVIRONMENT"))
     result, err := client.GetSecretValue(context.Background(), &secretsmanager.GetSecretValueInput{
         SecretId: aws.String(secretName),
@@ -1325,11 +1372,11 @@ func fetchProviderCredentials(provider string) (*ProviderCredentials, error) {
     if err != nil {
         return nil, err
     }
-    
+
     // Parse JSON secret
     var secrets map[string]interface{}
     json.Unmarshal([]byte(*result.SecretString), &secrets)
-    
+
     switch provider {
     case "openai":
         return &ProviderCredentials{
@@ -1345,7 +1392,7 @@ func fetchProviderCredentials(provider string) (*ProviderCredentials, error) {
             Endpoint: secrets["azure_openai_endpoint"].(string),
         }, nil
     }
-    
+
     return nil, fmt.Errorf("unknown provider: %s", provider)
 }
 ```
@@ -1358,6 +1405,7 @@ func fetchProviderCredentials(provider string) (*ProviderCredentials, error) {
 | `ROUTE_CREDS_FETCH_FAILED` | 503 | Cannot fetch credentials | Yes (retry) |
 
 **Boundary:**
+
 - **IN:** Filtered request + policies
 - **OUT:** Selected provider + credentials
 - **Does NOT:** Call LLM (that's Stage 11)
@@ -1370,12 +1418,14 @@ func fetchProviderCredentials(provider string) (*ProviderCredentials, error) {
 **AWS Services:** ElastiCache Redis (circuit breaker state)
 
 **Responsibilities:**
+
 - Check provider health status
 - Implement circuit breaker pattern (Open/Half-Open/Closed)
 - Select fallback provider if primary is unhealthy
 - Update provider health metrics
 
 **Entry Contract:**
+
 ```go
 type Stage10Input struct {
     SelectedProvider *ProviderSelection
@@ -1383,6 +1433,7 @@ type Stage10Input struct {
 ```
 
 **Exit Contract:**
+
 ```go
 type Stage10Output struct {
     HealthyProvider *ProviderSelection
@@ -1400,6 +1451,7 @@ type ProviderHealthStatus struct {
 ```
 
 **Circuit Breaker Logic:**
+
 ```go
 // Circuit breaker state machine
 type CircuitState int
@@ -1412,12 +1464,12 @@ const (
 
 func (cb *CircuitBreaker) Allow(provider string) (bool, string) {
     state := cb.GetState(provider)
-    
+
     switch state {
     case Closed:
         // Normal operation, allow request
         return true, "closed"
-        
+
     case Open:
         // Check if timeout expired to try again
         if time.Since(cb.GetLastFailure(provider)) > cb.OpenTimeout {
@@ -1426,12 +1478,12 @@ func (cb *CircuitBreaker) Allow(provider string) (bool, string) {
         }
         // Still open, deny request
         return false, "open"
-        
+
     case HalfOpen:
         // Allow limited requests to test recovery
         return true, "half-open"
     }
-    
+
     return false, "unknown"
 }
 
@@ -1448,7 +1500,7 @@ func (cb *CircuitBreaker) RecordSuccess(provider string) {
 func (cb *CircuitBreaker) RecordFailure(provider string) {
     cb.IncrementFailureCount(provider)
     cb.RecordLastFailure(provider, time.Now())
-    
+
     if cb.GetFailureCount(provider) >= cb.FailureThreshold {
         // Open circuit after N consecutive failures
         cb.SetState(provider, Open)
@@ -1457,6 +1509,7 @@ func (cb *CircuitBreaker) RecordFailure(provider string) {
 ```
 
 **AWS Integration (Redis):**
+
 ```go
 // Store circuit breaker state in Redis
 type RedisCircuitBreaker struct {
@@ -1469,7 +1522,7 @@ func (cb *RedisCircuitBreaker) GetState(provider string) CircuitState {
     if err == redis.Nil {
         return Closed // Default to closed
     }
-    
+
     switch val {
     case "open":
         return Open
@@ -1508,6 +1561,7 @@ func (cb *RedisCircuitBreaker) IncrementFailureCount(provider string) {
 ```
 
 **Fallback Selection:**
+
 ```go
 func SelectFallbackProvider(
     selected *ProviderSelection,
@@ -1521,7 +1575,7 @@ func SelectFallbackProvider(
             if err != nil {
                 continue
             }
-            
+
             return &ProviderSelection{
                 ProviderName: fallback,
                 Model:        selected.Model,
@@ -1531,7 +1585,7 @@ func SelectFallbackProvider(
             }, nil
         }
     }
-    
+
     return nil, &StageError{
         Code:    "CIRCUIT_ALL_OPEN",
         Message: "All providers are currently unavailable",
@@ -1540,6 +1594,7 @@ func SelectFallbackProvider(
 ```
 
 **Configuration:**
+
 ```
 FailureThreshold: 5    # Open circuit after 5 failures
 OpenTimeout: 30s       # Try half-open after 30 seconds
@@ -1553,6 +1608,7 @@ HalfOpenRequests: 3    # Allow 3 test requests in half-open
 | `CIRCUIT_STATE_ERROR` | 503 | Cannot read circuit state | Yes (retry) |
 
 **Boundary:**
+
 - **IN:** Selected provider
 - **OUT:** Healthy provider (may be fallback)
 - **Does NOT:** Call LLM (that's Stage 11)
@@ -1562,7 +1618,8 @@ HalfOpenRequests: 3    # Allow 3 test requests in half-open
 
 ### STAGE 11: LLM INVOCATION
 
-**AWS Services:** 
+**AWS Services:**
+
 - Lambda (execution context)
 - VPC NAT Gateway (outbound internet access)
 - CloudWatch (logs)
@@ -1570,6 +1627,7 @@ HalfOpenRequests: 3    # Allow 3 test requests in half-open
 **External Services:** OpenAI, Anthropic, Azure OpenAI APIs
 
 **Responsibilities:**
+
 - Call LLM provider API with filtered request
 - Handle API-specific request/response formats
 - Measure latency and token usage
@@ -1577,6 +1635,7 @@ HalfOpenRequests: 3    # Allow 3 test requests in half-open
 - Update circuit breaker on success/failure
 
 **Entry Contract:**
+
 ```go
 type Stage11Input struct {
     FilteredRequest *FilteredRequest
@@ -1585,6 +1644,7 @@ type Stage11Input struct {
 ```
 
 **Exit Contract:**
+
 ```go
 type Stage11Output struct {
     RawLLMResponse *LLMResponse
@@ -1628,6 +1688,7 @@ type UsageMetrics struct {
 ```
 
 **Provider Adapters:**
+
 ```go
 // Common interface for all providers
 type LLMProvider interface {
@@ -1644,7 +1705,7 @@ type OpenAIProvider struct {
 
 func (p *OpenAIProvider) ChatCompletion(ctx context.Context, req *FilteredRequest) (*LLMResponse, error) {
     start := time.Now()
-    
+
     // Convert to OpenAI format
     messages := make([]openai.ChatCompletionMessage, len(req.Request.Messages))
     for i, msg := range req.Request.Messages {
@@ -1653,7 +1714,7 @@ func (p *OpenAIProvider) ChatCompletion(ctx context.Context, req *FilteredReques
             Content: msg.Content,
         }
     }
-    
+
     // Call OpenAI API
     resp, err := p.client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
         Model:       req.Request.Model,
@@ -1666,7 +1727,7 @@ func (p *OpenAIProvider) ChatCompletion(ctx context.Context, req *FilteredReques
     if err != nil {
         return nil, err
     }
-    
+
     // Convert to unified format
     choices := make([]Choice, len(resp.Choices))
     for i, choice := range resp.Choices {
@@ -1679,7 +1740,7 @@ func (p *OpenAIProvider) ChatCompletion(ctx context.Context, req *FilteredReques
             FinishReason: choice.FinishReason,
         }
     }
-    
+
     return &LLMResponse{
         ID:      resp.ID,
         Object:  resp.Object,
@@ -1697,6 +1758,7 @@ func (p *OpenAIProvider) ChatCompletion(ctx context.Context, req *FilteredReques
 ```
 
 **Retry Logic:**
+
 ```go
 func InvokeWithRetry(
     ctx context.Context,
@@ -1705,27 +1767,27 @@ func InvokeWithRetry(
     maxRetries int,
 ) (*LLMResponse, error) {
     var lastErr error
-    
+
     for attempt := 0; attempt <= maxRetries; attempt++ {
         if attempt > 0 {
             // Exponential backoff
             backoff := time.Duration(1<<uint(attempt-1)) * time.Second
             time.Sleep(backoff)
         }
-        
+
         resp, err := provider.ChatCompletion(ctx, request)
         if err == nil {
             return resp, nil
         }
-        
+
         // Check if error is retryable
         if !isRetryableError(err) {
             return nil, err
         }
-        
+
         lastErr = err
     }
-    
+
     return nil, fmt.Errorf("max retries exceeded: %w", lastErr)
 }
 
@@ -1756,6 +1818,7 @@ func isRetryableError(err error) bool {
 | `LLM_CONTENT_FILTERED` | 451 | Provider content filter triggered | No |
 
 **Boundary:**
+
 - **IN:** Filtered request + healthy provider
 - **OUT:** Raw LLM response + metrics
 - **Does NOT:** Validate response content (that's Stage 12)
@@ -1765,11 +1828,13 @@ func isRetryableError(err error) bool {
 
 ### STAGE 12: RESPONSE INSPECTION
 
-**AWS Services:** 
+**AWS Services:**
+
 - None (in-memory validation)
 - Optional: Amazon Comprehend (ML-based content moderation)
 
 **Responsibilities:**
+
 - Validate response structure
 - Detect PII in response
 - Detect harmful content (violence, illegal advice)
@@ -1778,6 +1843,7 @@ func isRetryableError(err error) bool {
 - Generate inspection report
 
 **Entry Contract:**
+
 ```go
 type Stage12Input struct {
     RawLLMResponse   *LLMResponse
@@ -1786,6 +1852,7 @@ type Stage12Input struct {
 ```
 
 **Exit Contract:**
+
 ```go
 type Stage12Output struct {
     InspectedResponse *InspectedResponse
@@ -1811,6 +1878,7 @@ type ResponseValidationReport struct {
 ```
 
 **Inspection Logic:**
+
 ```go
 func InspectResponse(
     response *LLMResponse,
@@ -1821,10 +1889,10 @@ func InspectResponse(
         Violations:  []Violation{},
         ContentSafe: true,
     }
-    
+
     // Extract response text
     responseText := extractResponseText(response)
-    
+
     // Check for PII in response
     if policies.ContentPolicies.BlockPII {
         piiViolations := detectPII(responseText)
@@ -1833,14 +1901,14 @@ func InspectResponse(
             report.Violations = append(report.Violations, piiViolations...)
         }
     }
-    
+
     // Check for harmful content
     harmfulViolations := detectHarmfulContent(responseText)
     if len(harmfulViolations) > 0 {
         report.HarmfulContent = true
         report.Violations = append(report.Violations, harmfulViolations...)
     }
-    
+
     // Determine action
     if report.HarmfulContent {
         report.Action = "block"
@@ -1855,7 +1923,7 @@ func InspectResponse(
     } else {
         report.Action = "allow"
     }
-    
+
     return &InspectedResponse{
         Response:         response,
         RedactionApplied: report.Action == "redact",
@@ -1864,6 +1932,7 @@ func InspectResponse(
 ```
 
 **Harmful Content Detection:**
+
 ```go
 var harmfulPatterns = map[string]*regexp.Regexp{
     "violence":        regexp.MustCompile(`(?i)(kill|murder|assault|attack|hurt|harm)`),
@@ -1874,7 +1943,7 @@ var harmfulPatterns = map[string]*regexp.Regexp{
 
 func detectHarmfulContent(text string) []Violation {
     violations := []Violation{}
-    
+
     for category, pattern := range harmfulPatterns {
         if pattern.MatchString(text) {
             violations = append(violations, Violation{
@@ -1885,16 +1954,17 @@ func detectHarmfulContent(text string) []Violation {
             })
         }
     }
-    
+
     return violations
 }
 ```
 
 **Optional: AWS Comprehend Content Moderation:**
+
 ```go
 func ModerateContentWithComprehend(ctx context.Context, text string) ([]Violation, error) {
     client := comprehend.NewFromConfig(cfg)
-    
+
     result, err := client.DetectToxicContent(ctx, &comprehend.DetectToxicContentInput{
         TextSegments: []types.TextSegment{
             {Text: aws.String(text)},
@@ -1904,7 +1974,7 @@ func ModerateContentWithComprehend(ctx context.Context, text string) ([]Violatio
     if err != nil {
         return nil, err
     }
-    
+
     violations := []Violation{}
     for _, segment := range result.ResultList {
         for _, label := range segment.Labels {
@@ -1919,7 +1989,7 @@ func ModerateContentWithComprehend(ctx context.Context, text string) ([]Violatio
             }
         }
     }
-    
+
     return violations, nil
 }
 ```
@@ -1932,6 +2002,7 @@ func ModerateContentWithComprehend(ctx context.Context, text string) ([]Violatio
 | `INSPECT_SERVICE_ERROR` | 503 | Comprehend API failed | Yes (allow response) |
 
 **Boundary:**
+
 - **IN:** Raw LLM response + policies
 - **OUT:** Inspected, filtered response
 - **Does NOT:** Cache response (that's Stage 13)
@@ -1941,17 +2012,20 @@ func ModerateContentWithComprehend(ctx context.Context, text string) ([]Violatio
 
 ### STAGE 13: CACHE STORE (ASYNC)
 
-**AWS Services:** 
+**AWS Services:**
+
 - ElastiCache Redis (response cache)
 - SQS (async queue for cache writes)
 
 **Responsibilities:**
+
 - Store inspected response in cache
 - Set appropriate TTL based on request type
 - Handle cache write failures gracefully (non-blocking)
 - Invalidate cache on policy changes
 
 **Entry Contract:**
+
 ```go
 type Stage13Input struct {
     NormalizedRequest *NormalizedRequest
@@ -1961,6 +2035,7 @@ type Stage13Input struct {
 ```
 
 **Exit Contract:**
+
 ```go
 type Stage13Output struct {
     CacheStored bool
@@ -1969,6 +2044,7 @@ type Stage13Output struct {
 ```
 
 **Async Cache Store:**
+
 ```go
 func StoreCacheAsync(
     ctx context.Context,
@@ -1979,14 +2055,14 @@ func StoreCacheAsync(
     // Run in goroutine (non-blocking)
     go func() {
         cacheKey := GenerateCacheKey(tenant, request)
-        
+
         // Serialize response
         data, err := json.Marshal(response.Response)
         if err != nil {
             logError("cache_serialize_failed", err)
             return
         }
-        
+
         // Store in Redis with TTL
         ttl := determineCacheTTL(request)
         err = redis.Set(context.Background(), cacheKey, data, ttl)
@@ -1994,7 +2070,7 @@ func StoreCacheAsync(
             logError("cache_store_failed", err)
             return
         }
-        
+
         logInfo("cache_stored", map[string]interface{}{
             "cache_key": cacheKey,
             "ttl":       ttl,
@@ -2007,23 +2083,24 @@ func determineCacheTTL(request *NormalizedRequest) time.Duration {
     if request.Parameters.Temperature > 0.7 {
         return 5 * time.Minute
     }
-    
+
     // Longer TTL for deterministic requests
     if request.Parameters.Temperature == 0 {
         return 24 * time.Hour
     }
-    
+
     // Default TTL
     return 1 * time.Hour
 }
 ```
 
 **Cache Invalidation:**
+
 ```go
 // Invalidate cache on policy changes (via Redis pub/sub)
 func InvalidateCacheOnPolicyChange(orgID string) {
     pattern := fmt.Sprintf("cache:response:*:%s:*", orgID)
-    
+
     // Use Redis SCAN to find all matching keys
     iter := redis.Scan(context.Background(), 0, pattern, 100)
     for iter.Next(context.Background()) {
@@ -2033,6 +2110,7 @@ func InvalidateCacheOnPolicyChange(orgID string) {
 ```
 
 **Boundary:**
+
 - **IN:** Request + response + tenant context
 - **OUT:** Cache stored confirmation (async)
 - **Does NOT:** Block response delivery
@@ -2043,6 +2121,7 @@ func InvalidateCacheOnPolicyChange(orgID string) {
 ### STAGE 14: AUDIT, METRICS & TRACE CORRELATION
 
 **AWS Services:**
+
 - Aurora PostgreSQL (audit logs - 30 days hot storage)
 - S3 (long-term archive via EventBridge)
 - CloudWatch (metrics, logs)
@@ -2050,6 +2129,7 @@ func InvalidateCacheOnPolicyChange(orgID string) {
 - EventBridge (scheduled archival to S3)
 
 **Responsibilities:**
+
 - Log complete request/response with all stage decisions
 - Store in PostgreSQL for 30 days
 - Archive to S3 for long-term retention (7 years)
@@ -2058,6 +2138,7 @@ func InvalidateCacheOnPolicyChange(orgID string) {
 - Non-blocking (async via SQS)
 
 **Entry Contract:**
+
 ```go
 type Stage14Input struct {
     RequestContext *RequestContext // Contains all stage data
@@ -2065,6 +2146,7 @@ type Stage14Input struct {
 ```
 
 **Exit Contract:**
+
 ```go
 type Stage14Output struct {
     AuditLogID string
@@ -2074,46 +2156,47 @@ type Stage14Output struct {
 ```
 
 **Audit Log Structure:**
+
 ```go
 type AuditLog struct {
     // Identifiers
     ID                string
     RequestID         string
     Timestamp         time.Time
-    
+
     // Tenant
     OrganizationID    string
     ApplicationID     string
     UserID            string
-    
+
     // Request
     Model             string
     Provider          string
     PromptRedacted    string // PII redacted
     Messages          []Message
-    
+
     // Response
     ResponseRedacted  string // PII redacted
     CompletionText    string
-    
+
     // Metrics
     TokensInput       int
     TokensOutput      int
     TotalTokens       int
     CostUSD           float64
     LatencyMS         int
-    
+
     // Status
     Status            string // "success", "error", "blocked"
     ErrorMessage      string
-    
+
     // Stage decisions
     AuthResult        string
     PolicyViolations  []string
     ValidationResult  string
     ProviderSelected  string
     CircuitState      string
-    
+
     // Metadata
     ClientIP          string
     UserAgent         string
@@ -2122,22 +2205,23 @@ type AuditLog struct {
 ```
 
 **Async Logging via SQS:**
+
 ```go
 func LogAuditAsync(ctx context.Context, rc *RequestContext) {
     // Build audit log from request context
     auditLog := buildAuditLog(rc)
-    
+
     // Serialize to JSON
     data, err := json.Marshal(auditLog)
     if err != nil {
         logError("audit_serialize_failed", err)
         return
     }
-    
+
     // Send to SQS queue (non-blocking)
     go func() {
         sqsClient := sqs.NewFromConfig(cfg)
-        
+
         _, err := sqsClient.SendMessage(context.Background(), &sqs.SendMessageInput{
             QueueUrl:    aws.String(os.Getenv("AUDIT_QUEUE_URL")),
             MessageBody: aws.String(string(data)),
@@ -2151,23 +2235,24 @@ func LogAuditAsync(ctx context.Context, rc *RequestContext) {
 ```
 
 **SQS Consumer (separate Lambda):**
+
 ```go
 // Lambda function triggered by SQS
 func HandleAuditMessage(ctx context.Context, event events.SQSEvent) error {
     for _, record := range event.Records {
         var auditLog AuditLog
         json.Unmarshal([]byte(record.Body), &auditLog)
-        
+
         // Insert into PostgreSQL
         err := insertAuditLog(ctx, &auditLog)
         if err != nil {
             return err // Will retry via SQS
         }
-        
+
         // Emit metrics to CloudWatch
         emitMetrics(ctx, &auditLog)
     }
-    
+
     return nil
 }
 
@@ -2188,8 +2273,8 @@ func insertAuditLog(ctx context.Context, log *AuditLog) error {
             $11, $12, $13, $14, $15, $16, $17, $18, $19, $20
         )
     `
-    
-    _, err := db.ExecContext(ctx, query, 
+
+    _, err := db.ExecContext(ctx, query,
         log.ID, log.RequestID, log.Timestamp,
         log.OrganizationID, log.ApplicationID, log.UserID,
         log.Model, log.Provider,
@@ -2200,12 +2285,13 @@ func insertAuditLog(ctx context.Context, log *AuditLog) error {
         log.ClientIP, log.UserAgent,
         log.StageTimings,
     )
-    
+
     return err
 }
 ```
 
 **S3 Archival (EventBridge scheduled):**
+
 ```go
 // Lambda function triggered daily by EventBridge
 func ArchiveOldLogsToS3(ctx context.Context, event events.CloudWatchEvent) error {
@@ -2217,28 +2303,28 @@ func ArchiveOldLogsToS3(ctx context.Context, event events.CloudWatchEvent) error
         ORDER BY timestamp
         LIMIT 1000
     `
-    
+
     rows, err := db.QueryContext(ctx, query)
     if err != nil {
         return err
     }
     defer rows.Close()
-    
+
     // Batch logs by date
     batches := make(map[string][]AuditLog)
     for rows.Next() {
         var log AuditLog
         // Scan row...
-        
+
         date := log.Timestamp.Format("2006-01-02")
         batches[date] = append(batches[date], log)
     }
-    
+
     // Upload to S3
     s3Client := s3.NewFromConfig(cfg)
     for date, logs := range batches {
         data, _ := json.Marshal(logs)
-        
+
         key := fmt.Sprintf("audit-logs/%s/%s.json", date[:7], date)
         _, err := s3Client.PutObject(ctx, &s3.PutObjectInput{
             Bucket: aws.String(os.Getenv("AUDIT_BUCKET")),
@@ -2249,7 +2335,7 @@ func ArchiveOldLogsToS3(ctx context.Context, event events.CloudWatchEvent) error
             logError("s3_upload_failed", err)
             continue
         }
-        
+
         // Delete from PostgreSQL
         deleteQuery := `
             DELETE FROM request_logs
@@ -2257,16 +2343,17 @@ func ArchiveOldLogsToS3(ctx context.Context, event events.CloudWatchEvent) error
         `
         db.ExecContext(ctx, deleteQuery, date)
     }
-    
+
     return nil
 }
 ```
 
 **CloudWatch Metrics:**
+
 ```go
 func emitMetrics(ctx context.Context, log *AuditLog) {
     cw := cloudwatch.NewFromConfig(cfg)
-    
+
     metrics := []types.MetricDatum{
         {
             MetricName: aws.String("RequestCount"),
@@ -2304,7 +2391,7 @@ func emitMetrics(ctx context.Context, log *AuditLog) {
             },
         },
     }
-    
+
     cw.PutMetricData(ctx, &cloudwatch.PutMetricDataInput{
         Namespace:  aws.String("LLMControlPlane"),
         MetricData: metrics,
@@ -2313,6 +2400,7 @@ func emitMetrics(ctx context.Context, log *AuditLog) {
 ```
 
 **Boundary:**
+
 - **IN:** Complete request context (all stages)
 - **OUT:** Audit logged confirmation (async)
 - **Does NOT:** Block response delivery
@@ -2323,10 +2411,12 @@ func emitMetrics(ctx context.Context, log *AuditLog) {
 ### STAGE 15: RESPONSE DELIVERY
 
 **AWS Services:**
+
 - API Gateway (response formatting)
 - CloudFront (if web client)
 
 **Responsibilities:**
+
 - Format final HTTP response
 - Add response headers (rate limit info, trace IDs)
 - Set appropriate HTTP status codes
@@ -2334,6 +2424,7 @@ func emitMetrics(ctx context.Context, log *AuditLog) {
 - Return to client
 
 **Entry Contract:**
+
 ```go
 type Stage15Input struct {
     InspectedResponse *InspectedResponse
@@ -2342,6 +2433,7 @@ type Stage15Input struct {
 ```
 
 **Exit Contract:**
+
 ```go
 type Stage15Output struct {
     HTTPResponse *http.Response
@@ -2355,7 +2447,7 @@ type FinalResponse struct {
     Model   string                 `json:"model"`
     Choices []Choice               `json:"choices"`
     Usage   Usage                  `json:"usage"`
-    
+
     // Governance metadata
     Metadata GovernanceMetadata `json:"metadata"`
 }
@@ -2371,6 +2463,7 @@ type GovernanceMetadata struct {
 ```
 
 **Response Formatting:**
+
 ```go
 func DeliverResponse(
     w http.ResponseWriter,
@@ -2393,22 +2486,22 @@ func DeliverResponse(
             RequestID: rc.RequestID,
         },
     }
-    
+
     // Add response headers
     w.Header().Set("Content-Type", "application/json")
     w.Header().Set("X-Request-ID", rc.RequestID)
     w.Header().Set("X-Provider", rc.SelectedProvider.ProviderName)
-    
+
     // Rate limit headers
     if rc.QuotaCheck != nil {
         w.Header().Set("X-RateLimit-Limit", strconv.Itoa(rc.ResolvedPolicies.RateLimits.RequestsPerMinute))
         w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(rc.QuotaCheck.RateLimitStatus.RequestsRemaining))
         w.Header().Set("X-RateLimit-Reset", rc.QuotaCheck.RateLimitStatus.ResetAt.Format(time.RFC3339))
     }
-    
+
     // Trace correlation headers
     w.Header().Set("X-Trace-ID", getTraceID(r.Context()))
-    
+
     // Write response
     w.WriteHeader(http.StatusOK)
     json.NewEncoder(w).Encode(finalResp)
@@ -2416,6 +2509,7 @@ func DeliverResponse(
 ```
 
 **Error Response Formatting:**
+
 ```go
 func DeliverErrorResponse(
     w http.ResponseWriter,
@@ -2430,12 +2524,12 @@ func DeliverErrorResponse(
             "request_id": requestID,
         },
     }
-    
+
     // Add retry-after header if applicable
     if err.RetryAfter != nil {
         w.Header().Set("Retry-After", strconv.Itoa(int(err.RetryAfter.Seconds())))
     }
-    
+
     w.Header().Set("Content-Type", "application/json")
     w.Header().Set("X-Request-ID", requestID)
     w.WriteHeader(err.HTTPStatus)
@@ -2444,6 +2538,7 @@ func DeliverErrorResponse(
 ```
 
 **Boundary:**
+
 - **IN:** Inspected response + request context
 - **OUT:** HTTP response to client
 - **Does NOT:** Modify response content
@@ -2478,15 +2573,15 @@ func (e *StageError) Error() string {
 func HandlePipelineError(err *StageError, rc *RequestContext) *http.Response {
     // Log error with full context
     logError(err, rc)
-    
+
     // Update circuit breaker if provider error
     if err.Stage == "LLM_INVOCATION" && err.Recoverable {
         circuitBreaker.RecordFailure(rc.SelectedProvider.ProviderName)
     }
-    
+
     // Emit error metrics
     metrics.RecordError(err.Stage, err.Code)
-    
+
     // Return appropriate HTTP response
     return &http.Response{
         StatusCode: err.HTTPStatus,
@@ -2498,57 +2593,57 @@ func HandlePipelineError(err *StageError, rc *RequestContext) *http.Response {
 
 ### 4.3 Error Code Taxonomy
 
-| Prefix | Category | Examples |
-|--------|----------|----------|
-| `AUTH_*` | Authentication | `AUTH_MISSING_TOKEN`, `AUTH_EXPIRED_TOKEN` |
-| `AUTHZ_*` | Authorization | `AUTHZ_DENIED`, `AUTHZ_MODEL_BLOCKED` |
-| `TENANT_*` | Tenant identification | `TENANT_MISSING_ORG_ID` |
-| `NORM_*` | Request normalization | `NORM_INVALID_JSON`, `NORM_EMPTY_PROMPT` |
-| `POLICY_*` | Policy resolution | `POLICY_FETCH_FAILED` |
-| `QUOTA_*` | Budget & rate limits | `QUOTA_RATE_LIMIT_EXCEEDED`, `QUOTA_BUDGET_EXCEEDED` |
-| `VALIDATE_*` | Pre-processing validation | `VALIDATE_PII_DETECTED`, `VALIDATE_SECRET_DETECTED` |
-| `FILTER_*` | Content filtering | `FILTER_TOPIC_BLOCKED` |
-| `ROUTE_*` | Provider routing | `ROUTE_NO_PROVIDER`, `ROUTE_ALL_BLOCKED` |
-| `CIRCUIT_*` | Circuit breaker | `CIRCUIT_ALL_OPEN` |
-| `LLM_*` | LLM invocation | `LLM_TIMEOUT`, `LLM_PROVIDER_ERROR` |
-| `INSPECT_*` | Response inspection | `INSPECT_HARMFUL_CONTENT` |
-| `CACHE_*` | Caching | `CACHE_READ_ERROR` |
+| Prefix       | Category                  | Examples                                             |
+| ------------ | ------------------------- | ---------------------------------------------------- |
+| `AUTH_*`     | Authentication            | `AUTH_MISSING_TOKEN`, `AUTH_EXPIRED_TOKEN`           |
+| `AUTHZ_*`    | Authorization             | `AUTHZ_DENIED`, `AUTHZ_MODEL_BLOCKED`                |
+| `TENANT_*`   | Tenant identification     | `TENANT_MISSING_ORG_ID`                              |
+| `NORM_*`     | Request normalization     | `NORM_INVALID_JSON`, `NORM_EMPTY_PROMPT`             |
+| `POLICY_*`   | Policy resolution         | `POLICY_FETCH_FAILED`                                |
+| `QUOTA_*`    | Budget & rate limits      | `QUOTA_RATE_LIMIT_EXCEEDED`, `QUOTA_BUDGET_EXCEEDED` |
+| `VALIDATE_*` | Pre-processing validation | `VALIDATE_PII_DETECTED`, `VALIDATE_SECRET_DETECTED`  |
+| `FILTER_*`   | Content filtering         | `FILTER_TOPIC_BLOCKED`                               |
+| `ROUTE_*`    | Provider routing          | `ROUTE_NO_PROVIDER`, `ROUTE_ALL_BLOCKED`             |
+| `CIRCUIT_*`  | Circuit breaker           | `CIRCUIT_ALL_OPEN`                                   |
+| `LLM_*`      | LLM invocation            | `LLM_TIMEOUT`, `LLM_PROVIDER_ERROR`                  |
+| `INSPECT_*`  | Response inspection       | `INSPECT_HARMFUL_CONTENT`                            |
+| `CACHE_*`    | Caching                   | `CACHE_READ_ERROR`                                   |
 
 ---
 
 ## 5. AWS Service Integration Map
 
-| Stage | AWS Service | Purpose | Critical? |
-|-------|-------------|---------|-----------|
-| **0. Ingress** | CloudFront | Frontend CDN | No (direct to ALB works) |
-| **0. Ingress** | API Gateway | HTTP routing, custom domain | Yes |
-| **0. Ingress** | WAF | DDoS protection, rate limiting | Recommended |
-| **0. Ingress** | Lambda | Compute (runs all stages) | Yes |
-| **1. Authentication** | Cognito | User authentication, JWT | Yes |
-| **2. Identification** | (none) | In-memory processing | N/A |
-| **3. Normalization** | (none) | In-memory processing | N/A |
-| **4. Policy Resolution** | Aurora PostgreSQL | Policy storage | Yes |
-| **4. Policy Resolution** | ElastiCache Redis | Policy caching | Yes (performance) |
-| **5. Cache Check** | ElastiCache Redis | Response caching | No (optimization) |
-| **6. Budget & Rate** | ElastiCache Redis | Rate limit counters | Yes |
-| **6. Budget & Rate** | Aurora PostgreSQL | Cost tracking | Yes |
-| **7. Validation** | (none) | Regex in-memory | N/A |
-| **7. Validation** | Comprehend (optional) | ML-based PII detection | No (enhancement) |
-| **8. Content Filter** | (none) | In-memory processing | N/A |
-| **9. Provider Routing** | Secrets Manager | Provider credentials | Yes |
-| **10. Circuit Breaker** | ElastiCache Redis | Circuit state | Yes |
-| **11. LLM Invocation** | VPC NAT Gateway | Outbound internet | Yes (if VPC-enabled) |
-| **12. Response Inspection** | (none) | In-memory processing | N/A |
-| **12. Response Inspection** | Comprehend (optional) | Content moderation | No (enhancement) |
-| **13. Cache Store** | ElastiCache Redis | Response storage | No (optimization) |
-| **13. Cache Store** | SQS | Async queue | No (optimization) |
-| **14. Audit Logging** | SQS | Async queue | Yes |
-| **14. Audit Logging** | Aurora PostgreSQL | Hot storage (30 days) | Yes |
-| **14. Audit Logging** | S3 | Cold storage (7 years) | Yes (compliance) |
-| **14. Audit Logging** | EventBridge | Scheduled archival | Yes |
-| **14. Audit Logging** | CloudWatch | Metrics, logs | Yes |
-| **15. Response Delivery** | API Gateway | HTTP response | Yes |
-| **15. Response Delivery** | CloudFront (optional) | Response caching | No |
+| Stage                       | AWS Service           | Purpose                        | Critical?                |
+| --------------------------- | --------------------- | ------------------------------ | ------------------------ |
+| **0. Ingress**              | CloudFront            | Frontend CDN                   | No (direct to ALB works) |
+| **0. Ingress**              | API Gateway           | HTTP routing, custom domain    | Yes                      |
+| **0. Ingress**              | WAF                   | DDoS protection, rate limiting | Recommended              |
+| **0. Ingress**              | Lambda                | Compute (runs all stages)      | Yes                      |
+| **1. Authentication**       | Cognito               | User authentication, JWT       | Yes                      |
+| **2. Identification**       | (none)                | In-memory processing           | N/A                      |
+| **3. Normalization**        | (none)                | In-memory processing           | N/A                      |
+| **4. Policy Resolution**    | Aurora PostgreSQL     | Policy storage                 | Yes                      |
+| **4. Policy Resolution**    | ElastiCache Redis     | Policy caching                 | Yes (performance)        |
+| **5. Cache Check**          | ElastiCache Redis     | Response caching               | No (optimization)        |
+| **6. Budget & Rate**        | ElastiCache Redis     | Rate limit counters            | Yes                      |
+| **6. Budget & Rate**        | Aurora PostgreSQL     | Cost tracking                  | Yes                      |
+| **7. Validation**           | (none)                | Regex in-memory                | N/A                      |
+| **7. Validation**           | Comprehend (optional) | ML-based PII detection         | No (enhancement)         |
+| **8. Content Filter**       | (none)                | In-memory processing           | N/A                      |
+| **9. Provider Routing**     | Secrets Manager       | Provider credentials           | Yes                      |
+| **10. Circuit Breaker**     | ElastiCache Redis     | Circuit state                  | Yes                      |
+| **11. LLM Invocation**      | VPC NAT Gateway       | Outbound internet              | Yes (if VPC-enabled)     |
+| **12. Response Inspection** | (none)                | In-memory processing           | N/A                      |
+| **12. Response Inspection** | Comprehend (optional) | Content moderation             | No (enhancement)         |
+| **13. Cache Store**         | ElastiCache Redis     | Response storage               | No (optimization)        |
+| **13. Cache Store**         | SQS                   | Async queue                    | No (optimization)        |
+| **14. Audit Logging**       | SQS                   | Async queue                    | Yes                      |
+| **14. Audit Logging**       | Aurora PostgreSQL     | Hot storage (30 days)          | Yes                      |
+| **14. Audit Logging**       | S3                    | Cold storage (7 years)         | Yes (compliance)         |
+| **14. Audit Logging**       | EventBridge           | Scheduled archival             | Yes                      |
+| **14. Audit Logging**       | CloudWatch            | Metrics, logs                  | Yes                      |
+| **15. Response Delivery**   | API Gateway           | HTTP response                  | Yes                      |
+| **15. Response Delivery**   | CloudFront (optional) | Response caching               | No                       |
 
 ### 5.1 AWS Service Configuration Summary
 
@@ -2627,40 +2722,40 @@ EventBridge:
 
 ### 6.1 Latency Targets (P95)
 
-| Stage | Target | Critical Path | AWS Service Overhead |
-|-------|--------|---------------|---------------------|
-| 1. Authentication | 20ms | Yes | Cognito JWKS fetch (cached) |
-| 2. Identification | 2ms | Yes | In-memory |
-| 3. Normalization | 5ms | Yes | In-memory |
-| 4. Policy Resolution | 50ms | Yes | PostgreSQL (10ms) + Redis (5ms) |
-| 5. Cache Check | 10ms | Yes | Redis GET |
-| 6. Budget & Rate Check | 30ms | Yes | Redis ZSET ops (10ms) + PostgreSQL (15ms) |
-| 7. Pre-Processing Validation | 20ms | Yes | Regex in-memory |
-| 8. Content Filtering | 10ms | Yes | In-memory |
-| 9. Provider Routing | 20ms | Yes | Secrets Manager (15ms) |
-| 10. Circuit Breaker | 5ms | Yes | Redis GET |
-| 11. LLM Invocation | 500-2000ms | Yes | External API (dominant factor) |
-| 12. Response Inspection | 30ms | Yes | In-memory regex |
-| 13. Cache Store | N/A | No | Async (Redis PUT) |
-| 14. Audit Logging | N/A | No | Async (SQS) |
-| 15. Response Delivery | 10ms | Yes | API Gateway formatting |
-| **Total (synchronous)** | **712-2212ms** | | |
+| Stage                        | Target         | Critical Path | AWS Service Overhead                      |
+| ---------------------------- | -------------- | ------------- | ----------------------------------------- |
+| 1. Authentication            | 20ms           | Yes           | Cognito JWKS fetch (cached)               |
+| 2. Identification            | 2ms            | Yes           | In-memory                                 |
+| 3. Normalization             | 5ms            | Yes           | In-memory                                 |
+| 4. Policy Resolution         | 50ms           | Yes           | PostgreSQL (10ms) + Redis (5ms)           |
+| 5. Cache Check               | 10ms           | Yes           | Redis GET                                 |
+| 6. Budget & Rate Check       | 30ms           | Yes           | Redis ZSET ops (10ms) + PostgreSQL (15ms) |
+| 7. Pre-Processing Validation | 20ms           | Yes           | Regex in-memory                           |
+| 8. Content Filtering         | 10ms           | Yes           | In-memory                                 |
+| 9. Provider Routing          | 20ms           | Yes           | Secrets Manager (15ms)                    |
+| 10. Circuit Breaker          | 5ms            | Yes           | Redis GET                                 |
+| 11. LLM Invocation           | 500-2000ms     | Yes           | External API (dominant factor)            |
+| 12. Response Inspection      | 30ms           | Yes           | In-memory regex                           |
+| 13. Cache Store              | N/A            | No            | Async (Redis PUT)                         |
+| 14. Audit Logging            | N/A            | No            | Async (SQS)                               |
+| 15. Response Delivery        | 10ms           | Yes           | API Gateway formatting                    |
+| **Total (synchronous)**      | **712-2212ms** |               |                                           |
 
 ### 6.2 Throughput Targets
 
-| Environment | Requests/Second | Concurrent Lambda | Aurora ACU | Redis Nodes |
-|-------------|-----------------|-------------------|------------|-------------|
-| Sandbox | 10 | 10 | 0.5-2 | 1 |
-| Demo | 50 | 50 | 0.5-4 | 2 |
-| Production | 1000 | 200 (reserved) + 800 (burst) | 1-8 | 2 (with replica) |
+| Environment | Requests/Second | Concurrent Lambda            | Aurora ACU | Redis Nodes      |
+| ----------- | --------------- | ---------------------------- | ---------- | ---------------- |
+| Sandbox     | 10              | 10                           | 0.5-2      | 1                |
+| Demo        | 50              | 50                           | 0.5-4      | 2                |
+| Production  | 1000            | 200 (reserved) + 800 (burst) | 1-8        | 2 (with replica) |
 
 ### 6.3 Cost Targets
 
-| Environment | Monthly Budget | Lambda | Aurora | Redis | Other |
-|-------------|----------------|--------|--------|-------|-------|
-| Sandbox | $35 | $0.20 | $15 | $12 | $8 |
-| Demo | $150 | $50 | $50 | $30 | $20 |
-| Production (1000 req/sec) | $20,927 | $5,200 | $200 | $300 | $15,227 |
+| Environment               | Monthly Budget | Lambda | Aurora | Redis | Other   |
+| ------------------------- | -------------- | ------ | ------ | ----- | ------- |
+| Sandbox                   | $35            | $0.20  | $15    | $12   | $8      |
+| Demo                      | $150           | $50    | $50    | $30   | $20     |
+| Production (1000 req/sec) | $20,927        | $5,200 | $200   | $300  | $15,227 |
 
 ---
 
@@ -2669,24 +2764,28 @@ EventBridge:
 ### 7.1 Development Phases
 
 **Phase 1: Core Pipeline (Weeks 1-4)**
+
 - Stages 1-2: Authentication + Identification
 - Stage 11: LLM Invocation (OpenAI only)
 - Stage 15: Response Delivery
 - **Goal:** End-to-end request flow
 
 **Phase 2: Governance (Weeks 5-8)**
+
 - Stage 4: Policy Resolution
 - Stage 6: Budget & Rate Limiting
 - Stage 7-8: Validation + Filtering
 - **Goal:** Policy enforcement
 
 **Phase 3: Reliability (Weeks 9-12)**
+
 - Stage 9-10: Provider Routing + Circuit Breaker
 - Stage 5, 13: Caching
 - Stage 12: Response Inspection
 - **Goal:** Production-ready
 
 **Phase 4: Observability (Weeks 13-16)**
+
 - Stage 14: Audit Logging + Metrics
 - CloudWatch dashboards
 - Datadog APM integration
@@ -2695,20 +2794,24 @@ EventBridge:
 ### 7.2 Testing Strategy
 
 **Unit Tests:**
+
 - Each stage in isolation
 - Mock dependencies (Redis, PostgreSQL, Cognito)
 - Test all error paths
 
 **Integration Tests:**
+
 - Full pipeline with real AWS services
 - Test containerized (Docker Compose for local services)
 
 **Load Tests:**
+
 - k6 or Apache Bench
 - Target: 1000 req/sec sustained for 5 minutes
 - Monitor Aurora, Redis, Lambda metrics
 
 **Security Tests:**
+
 - OWASP ZAP for API Gateway
 - PII detection accuracy tests
 - Prompt injection tests
@@ -2716,12 +2819,14 @@ EventBridge:
 ### 7.3 Monitoring & Alerting
 
 **Critical Alerts (PagerDuty):**
+
 - Lambda error rate > 5%
 - Aurora connections exhausted
 - Redis CPU > 80%
 - Any stage consistently timing out
 
 **Warning Alerts (Slack):**
+
 - Budget threshold exceeded (80%)
 - Circuit breaker opened
 - Cache hit rate < 20%
