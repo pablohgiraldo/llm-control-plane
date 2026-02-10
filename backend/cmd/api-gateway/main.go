@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -43,7 +42,7 @@ func loggingMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 		dur := time.Since(start)
 		// minimal structured line
-		log.Println(fmt.Sprintf(`{"method":"%s","path":"%s","duration_ms":%d}`, r.Method, r.URL.Path, dur.Milliseconds()))
+		log.Printf(`{"method":"%s","path":"%s","duration_ms":%d}`, r.Method, r.URL.Path, dur.Milliseconds())
 	})
 }
 
