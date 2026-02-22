@@ -127,7 +127,7 @@ cp .env.example .env
 ENVIRONMENT=dev
 
 # Database
-DATABASE_URL=postgresql://dev:dev@localhost:5432/llm_control_plane_dev?sslmode=disable
+DATABASE_URL=postgresql://dev:audit_password@localhost:5432/audit?sslmode=disable
 
 # Redis
 REDIS_URL=localhost:6379
@@ -181,7 +181,7 @@ go run cmd/migrate/main.go up
 **Verify migrations:**
 ```powershell
 # Connect to PostgreSQL
-docker exec -it llm-cp-postgres psql -U dev -d llm_control_plane_dev
+docker exec -it llm-cp-postgres psql -U dev -d audit
 
 # List tables
 \dt

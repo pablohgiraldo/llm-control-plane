@@ -5,6 +5,15 @@
   text-align: center;
 }
 
+.loading,
+.error {
+  padding: 2rem;
+}
+
+.error {
+  color: #c00;
+}
+
 .logo {
   height: 6em;
   padding: 1.5em;

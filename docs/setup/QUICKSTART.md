@@ -59,7 +59,7 @@ go build -v ./...
 ### 3. Start Local Infrastructure
 
 ```bash
-# Start PostgreSQL and Redis
+# Start PostgreSQL
 make infra-up
 
 # Verify services are running
@@ -67,7 +67,6 @@ make infra-status
 
 # Expected output:
 # - llm-cp-postgres (healthy)
-# - llm-cp-redis (healthy)
 ```
 
 ---
@@ -100,7 +99,7 @@ make check            # Run all quality checks (fmt, vet, lint, test)
 
 ### Infrastructure
 ```bash
-make infra-up         # Start PostgreSQL + Redis
+make infra-up         # Start PostgreSQL
 make infra-down       # Stop infrastructure
 make infra-reset      # Reset all data (destructive!)
 make infra-logs       # Show infrastructure logs
@@ -149,7 +148,7 @@ llm-control-plane/
 │
 ├── go.mod                        # Go module definition
 ├── Makefile                      # Build automation
-└── docker-compose.yml            # Local infrastructure
+└── backend/docker-compose.yml   # Local infrastructure
 ```
 
 ---
@@ -167,9 +166,8 @@ llm-control-plane/
 
 Configuration is managed through environment variables. For local development:
 
-1. **Database:** `postgresql://dev:dev@localhost:5432/llm_control_plane_dev`
-2. **Redis:** `localhost:6379` (password: `dev`)
-3. **HTTP Server:** `:8080`
+1. **Database:** `postgresql://dev:audit_password@localhost:5432/audit`
+2. **HTTP Server:** `:8080`
 
 See `backend/internal/runtimeconfig/types.go` for all configuration options.
 

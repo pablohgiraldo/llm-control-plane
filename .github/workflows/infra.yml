@@ -1,0 +1,380 @@
+name: Deploy Infrastructure
+
+on:
+  workflow_call:
+    inputs:
+      instance_name:
+        required: true
+        type: string
+        description: "Instance identifier (e.g., sandbox-llm-cp, rc-llm-cp)"
+      web_domain:
+        required: true
+        type: string
+        description: "Frontend domain (e.g., sandbox.llm-cp.example.com)"
+      api_domain:
+        required: true
+        type: string
+        description: "API domain (e.g., api.sandbox.llm-cp.example.com)"
+      environment:
+        required: true
+        type: string
+        description: "Environment name (sandbox, prod)"
+      reset_database:
+        required: false
+        type: string
+        default: "false"
+        description: "Reset database before deployment (DROP ALL TABLES)"
+      aurora_min_capacity:
+        required: false
+        type: string
+        default: "0.5"
+        description: "Aurora min ACU capacity"
+      aurora_max_capacity:
+        required: false
+        type: string
+        default: "2"
+        description: "Aurora max ACU capacity"
+      login_position:
+        required: false
+        type: string
+        default: "CENTER"
+        description: "Cognito login button position (CENTER or END)"
+      allowed_domains:
+        required: false
+        type: string
+        default: ""
+        description: "Comma-separated allowed email domains for sign-up (empty = no restriction)"
+    secrets:
+      aws_role_arn:
+        required: true
+        description: "AWS IAM Role ARN for OIDC authentication"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # Required for AWS OIDC authentication
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.aws_role_arn }}
+          aws-region: us-east-1
+          role-session-name: ${{ github.actor }}-${{ github.run_id }}
+
+      # Set up Terraform backend
+      - name: Set up backend
+        uses: realsensesolutions/actions-aws-backend-setup@main
+        id: backend
+        with:
+          instance: ${{ inputs.instance_name }}
+      - name: Network
+        uses: realsensesolutions/actions-aws-network@main
+
+      #- name: Deploy S3
+      #uses: realsensesolutions/actions-aws-bucket@main
+      #id: bucket
+      #with:
+      #  name: ${{ inputs.instance_name }}
+      #  naming_pattern: service-provider
+      #  bucket_purpose: files
+      #  cors_configuration: infra/${{ inputs.instance_name }}/cors.json
+
+      - name: Deploy Auth
+        uses: realsensesolutions/actions-aws-auth@main
+        id: auth
+        with:
+          name: auth-${{ inputs.instance_name }}
+          callback_urls: "https://${{ inputs.api_domain }}/oauth2/idpresponse,https://localhost:3000/oauth2/idpresponse"
+          logout_urls: "https://${{ inputs.web_domain }},https://localhost:5173"
+          enable_managed_login_branding: true
+          allowed_domains: ${{ inputs.allowed_domains }}
+          self_registration: "true"
+          login_position: ${{ inputs.login_position }}
+          background_asset_path: infra/${{ inputs.instance_name }}/assets/background.png
+          logo_asset_path: infra/${{ inputs.instance_name }}/assets/logo.png
+          favicon_asset_path: infra/${{ inputs.instance_name }}/assets/favicon.ico
+          case_sensitive: "false"
+          permissions: |
+            s3: write
+            cognito: write
+
+      # Deploy Aurora PostgreSQL Serverless v2
+      #- name: Deploy Aurora PostgreSQL
+      #uses: realsensesolutions/actions-aws-postgres-aurora@main
+      #id: aurora
+      #with:
+      #  name: ${{ inputs.instance_name }}
+      #  database_name: ${{ inputs.instance_name }}db
+      #  deletion_protection_enabled: 'false'
+      #  min_capacity: ${{ inputs.aurora_min_capacity }}
+      #  max_capacity: ${{ inputs.aurora_max_capacity }}
+      #  publicly_accessible: ${{ inputs.publicly_accessible }}
+
+      # Deploy the Lambda function
+      #- name: Deploy Lambda Web
+      #id: deploy
+      #uses: realsensesolutions/actions-aws-function-go@main
+      #with:
+      #  name: ${{ inputs.instance_name }}-lambda
+      #  entrypoint-file: main.go
+      #  working-directory: backend
+      #  memory: 256
+      #  timeout: 900
+      #  allow-public-access: true
+      #  use-vpc: true
+
+      #env: |
+      #S3_BUCKET_NAME: ${{ steps.bucket.outputs.name }}
+      #AURORA_SECRET_ARN: ${{ steps.aurora.outputs.secret_arn }}
+      #COGNITO_REDIRECT_URI: https://${{ inputs.api_domain }}/oauth2/idpresponse
+      #COGNITO_USER_POOL_ID: ${{ steps.auth.outputs.user_pool_id }}
+      #COGNITO_CLIENT_ID: ${{ steps.auth.outputs.client_id }}
+      #COGNITO_CLIENT_SECRET: ${{ steps.auth.outputs.client_secret }}
+      #COGNITO_DOMAIN: ${{ steps.auth.outputs.cognito_domain }}
+      #COGNITO_USER_POOL_ARN: ${{ steps.auth.outputs.user_pool_arn }}
+      #FRONT_END_URL: https://${{ inputs.web_domain }}
+      #ENVIRONMENT: ${{ inputs.environment }}
+      #SERVICE_PROVIDER_ID: ${{ inputs.service_provider_id }}
+      #SES_FROM_EMAIL: ${{ inputs.ses_from_email }}
+      #AWS_USE_DUALSTACK_ENDPOINT: true
+      #permissions: |
+      #  s3: write
+      #  sqs: write
+      #  ses: write
+      #  cognito: write
+      #  secretsmanager: read
+
+      # - name: Reset Database
+      #   if: inputs.reset_database == 'true'
+      #   run: |
+      #     echo "⚠️  DATABASE RESET REQUESTED"
+      #     echo "🗑️  Dropping all tables and resetting database..."
+      #
+      #     # Create reset event payload
+      #     echo '{"type": "database-reset"}' > /tmp/reset-payload.json
+      #
+      #     # Invoke the Lambda function with reset event
+      #     RESPONSE=$(aws lambda invoke \
+      #       --function-name ${{ steps.deploy.outputs.arn }} \
+      #       --payload fileb:///tmp/reset-payload.json \
+      #       --output json \
+      #       /tmp/reset-response.json)
+      #
+      #     # Check if the invocation was successful
+      #     STATUS_CODE=$(echo $RESPONSE | jq -r '.StatusCode')
+      #     if [ "$STATUS_CODE" != "200" ]; then
+      #       echo "❌ Lambda invocation failed with status code: $STATUS_CODE"
+      #       echo "Response: $RESPONSE"
+      #       exit 1
+      #     fi
+      #
+      #     # Check for Lambda function errors
+      #     FUNCTION_ERROR=$(echo $RESPONSE | jq -r '.FunctionError // empty')
+      #     if [ -n "$FUNCTION_ERROR" ]; then
+      #       echo "❌ Lambda function error: $FUNCTION_ERROR"
+      #       cat /tmp/reset-response.json
+      #       exit 1
+      #     fi
+      #
+      #     # Check the response payload
+      #     RESET_RESULT=$(cat /tmp/reset-response.json | jq -r '.status')
+      #     if [ "$RESET_RESULT" != "success" ]; then
+      #       echo "❌ Database reset failed"
+      #       cat /tmp/reset-response.json
+      #       exit 1
+      #     fi
+      #
+      #     echo "✅ Database reset completed successfully"
+      #     cat /tmp/reset-response.json | jq -r '.message'
+
+      # - name: Check Database Status
+      #   run: |
+      #     echo "📊 Checking database status before migrations..."
+      #
+      #     # Create status event payload
+      #     echo '{"type": "database-status"}' > /tmp/status-payload.json
+      #
+      #     # Invoke the Lambda function with status event
+      #     RESPONSE=$(aws lambda invoke \
+      #       --function-name ${{ steps.deploy.outputs.arn }} \
+      #       --payload fileb:///tmp/status-payload.json \
+      #       --output json \
+      #       /tmp/status-response.json)
+      #
+      #     # Check if the invocation was successful
+      #     STATUS_CODE=$(echo $RESPONSE | jq -r '.StatusCode')
+      #     if [ "$STATUS_CODE" != "200" ]; then
+      #       echo "⚠️ Lambda invocation failed with status code: $STATUS_CODE"
+      #       echo "Response: $RESPONSE"
+      #       echo "Continuing anyway..."
+      #     fi
+      #
+      #     echo ""
+      #     echo "📋 Database Status Report:"
+      #     echo "=========================="
+      #     cat /tmp/status-response.json | jq .
+      #     echo ""
+      #
+      #     # Extract and display summary
+      #     echo "📊 Summary:"
+      #     echo "  - All Cluster Databases: $(cat /tmp/status-response.json | jq -r '.clusterDatabases | length') databases"
+      #     echo "  - Service Provider DB: $(cat /tmp/status-response.json | jq -r '.serviceProviderDB.name // \"N/A\"')"
+      #     echo "  - Tenant Databases: $(cat /tmp/status-response.json | jq -r '.tenantDatabases | length') databases"
+      #
+      #     # Show legacy databases if any
+      #     LEGACY_COUNT=$(cat /tmp/status-response.json | jq -r '[.tenantDatabases[] | select(.isLegacy == true)] | length')
+      #     if [ "$LEGACY_COUNT" != "0" ] && [ "$LEGACY_COUNT" != "null" ]; then
+      #       echo "  - Legacy Databases (will be skipped): $LEGACY_COUNT"
+      #       cat /tmp/status-response.json | jq -r '.tenantDatabases[] | select(.isLegacy == true) | "    - \(.name) (version \(.migrationVersion))"'
+      #     fi
+      #
+      #     echo ""
+      #     echo "✅ Database status check completed"
+
+      # - name: Run Database Migrations
+      #   run: |
+      #     echo "🗄️ Running database migrations..."
+      #
+      #     # Create migration event payload
+      #     echo '{"type": "user-migration"}' > /tmp/migration-payload.json
+      #
+      #     # Invoke the Lambda function with migration event
+      #     RESPONSE=$(aws lambda invoke \
+      #       --function-name ${{ steps.deploy.outputs.arn }} \
+      #       --payload fileb:///tmp/migration-payload.json \
+      #       --output json \
+      #       /tmp/migration-response.json)
+      #
+      #     # Check if the invocation was successful
+      #     STATUS_CODE=$(echo $RESPONSE | jq -r '.StatusCode')
+      #     if [ "$STATUS_CODE" != "200" ]; then
+      #       echo "❌ Lambda invocation failed with status code: $STATUS_CODE"
+      #       echo "Response: $RESPONSE"
+      #       exit 1
+      #     fi
+      #
+      #     # Check for Lambda function errors (FunctionError field)
+      #     FUNCTION_ERROR=$(echo $RESPONSE | jq -r '.FunctionError // empty')
+      #     if [ -n "$FUNCTION_ERROR" ]; then
+      #       echo "❌ Lambda function error: $FUNCTION_ERROR"
+      #       echo "Response payload:"
+      #       cat /tmp/migration-response.json
+      #       echo ""
+      #       exit 1
+      #     fi
+      #
+      #     # Check the response payload for migration success
+      #     MIGRATION_RESULT=$(cat /tmp/migration-response.json | jq -r '.status')
+      #     MIGRATION_MESSAGE=$(cat /tmp/migration-response.json | jq -r '.message // "No message provided"')
+      #
+      #     if [ "$MIGRATION_RESULT" != "success" ]; then
+      #       echo "❌ Database migrations failed"
+      #       echo "Status: $MIGRATION_RESULT"
+      #       echo "Error message: $MIGRATION_MESSAGE"
+      #       echo ""
+      #       echo "Full response:"
+      #       cat /tmp/migration-response.json
+      #       echo ""
+      #       exit 1
+      #     fi
+      #
+      #     echo "✅ Database migrations completed successfully"
+      #     echo "   Message: $MIGRATION_MESSAGE"
+
+      # - name: Run Database Seeders
+      #   run: |
+      #     echo "🌱 Running database seeders for environment: ${{ inputs.environment }}..."
+      #     echo "ℹ️  Seeders will use environment-specific data (ENVIRONMENT=${{ inputs.environment }})"
+      #
+      #     # Create seeder event payload
+      #     echo '{"type": "database-seeder"}' > /tmp/seeder-payload.json
+      #
+      #     # Invoke the Lambda function with seeder event
+      #     RESPONSE=$(aws lambda invoke \
+      #       --function-name ${{ steps.deploy.outputs.arn }} \
+      #       --payload fileb:///tmp/seeder-payload.json \
+      #       --output json \
+      #       /tmp/seeder-response.json)
+      #
+      #     # Check if the invocation was successful
+      #     STATUS_CODE=$(echo $RESPONSE | jq -r '.StatusCode')
+      #     if [ "$STATUS_CODE" != "200" ]; then
+      #       echo "❌ Lambda invocation failed with status code: $STATUS_CODE"
+      #       echo "Response: $RESPONSE"
+      #       exit 1
+      #     fi
+      #
+      #     # Check for Lambda function errors (FunctionError field)
+      #     FUNCTION_ERROR=$(echo $RESPONSE | jq -r '.FunctionError // empty')
+      #     if [ -n "$FUNCTION_ERROR" ]; then
+      #       echo "❌ Lambda function error: $FUNCTION_ERROR"
+      #       echo "Response payload:"
+      #       cat /tmp/seeder-response.json
+      #       exit 1
+      #     fi
+      #
+      #     # Check the response payload for seeder success
+      #     SEEDER_RESULT=$(cat /tmp/seeder-response.json | jq -r '.status')
+      #     if [ "$SEEDER_RESULT" != "success" ]; then
+      #       echo "❌ Database seeders failed"
+      #       echo "Error message:"
+      #       cat /tmp/seeder-response.json | jq -r '.message'
+      #       echo ""
+      #       echo "Full response:"
+      #       cat /tmp/seeder-response.json
+      #       exit 1
+      #     fi
+      #
+      #     echo "✅ Database seeders completed successfully"
+      #
+      #     if [ "${{ inputs.environment }}" == "sandbox" ]; then
+      #       echo "📊 Sandbox: Comprehensive test data populated"
+      #     else
+      #       echo "📊 Production: Initial users populated"
+      #     fi
+
+      # - name: Deploy API Gateway with custom domain
+      #   uses: realsensesolutions/actions-aws-api-gateway@main
+      #   id: api_gateway
+      #   with:
+      #     domain: ${{ inputs.api_domain }}
+      #     function: ${{ steps.deploy.outputs.arn }}
+
+      # - name: Install Node.js for frontend
+      #   uses: actions/setup-node@v4
+      #   with:
+      #     node-version: 20
+      #     cache: "npm"
+      #     cache-dependency-path: frontend
+
+      # - name: Install frontend dependencies
+      #   working-directory: frontend
+      #   run: npm install
+
+      # - name: Create customer assets directory
+      #   run: |
+      #     mkdir -p frontend/public/assets/images/
+      #     cp infra/${{ inputs.instance_name }}/assets/* frontend/public/assets/images/
+      #   shell: bash
+
+      # - name: Build frontend
+      #   working-directory: frontend
+      #   env:
+      #     VITE_BACKEND_URL: https://${{ inputs.api_domain }}
+
+      #   run: npm run build
+
+      # - name: Deploy frontend
+      #   uses: realsensesolutions/actions-aws-website@main
+      #   id: frontend
+      #   with:
+      #     domain: ${{ inputs.web_domain }}
+      #     name: ${{ inputs.instance_name }}-frontend
+      #     content-path: frontend/dist
+      #     spa: "true"

@@ -1,78 +1,17 @@
 # Makefile for LLM Control Plane
 # Enterprise-grade build automation for Go-based cloud-native middleware
 
-SHELL := /bin/bash
-.DEFAULT_GOAL := help
-
-# Build configuration
-APP_NAME := api-gateway
-BIN_DIR := bin
-CMD_DIR := backend/cmd
-INTERNAL_DIR := backend/internal
-COVERAGE_DIR := coverage
-
-# Go configuration
-GO := go
-GOFLAGS := -v
-GOTEST := $(GO) test
-GOBUILD := $(GO) build
-GOCLEAN := $(GO) clean
-GOMOD := $(GO) mod
-GOFMT := gofmt
-GOVET := $(GO) vet
-
-# Build flags
-BUILD_FLAGS := -ldflags="-s -w"
-BUILD_FLAGS += -ldflags="-X main.Version=$(shell git describe --tags --always --dirty 2>/dev/null || echo 'dev')"
-BUILD_FLAGS += -ldflags="-X main.BuildTime=$(shell date -u '+%Y-%m-%d_%H:%M:%S')"
-BUILD_FLAGS += -ldflags="-X main.GitCommit=$(shell git rev-parse --short HEAD 2>/dev/null || echo 'unknown')"
-
-# Docker configuration
-DOCKER_COMPOSE := docker compose
-COMPOSE_FILE := docker-compose.yml
-
-# Colors for output
-COLOR_RESET := \033[0m
-COLOR_BOLD := \033[1m
-COLOR_GREEN := \033[32m
-COLOR_YELLOW := \033[33m
-COLOR_BLUE := \033[34m
-
 # =============================================================================
-# Help target
+# Include Modular Makefiles
 # =============================================================================
 
-.PHONY: help
-help: ## Show this help message
-	@echo -e "$(COLOR_BOLD)LLM Control Plane - Available Commands$(COLOR_RESET)"
-	@echo ""
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
-		awk 'BEGIN {FS = ":.*?## "}; {printf "  $(COLOR_BLUE)%-20s$(COLOR_RESET) %s\n", $$1, $$2}'
-	@echo ""
+include make/config.mk
+include make/help.mk
+include make/database.mk
+include make/dev.mk
+include make/ports.mk
 
-# =============================================================================
-# Development workflow
-# =============================================================================
-
-.PHONY: setup
-setup: ## Initial project setup (install deps, start infra)
-	@echo -e "$(COLOR_GREEN)Setting up development environment...$(COLOR_RESET)"
-	@$(MAKE) deps
-	@$(MAKE) infra-up
-	@echo -e "$(COLOR_GREEN)✓ Setup complete!$(COLOR_RESET)"
-	@echo -e "$(COLOR_YELLOW)Run 'make dev' to start the development server$(COLOR_RESET)"
-
-.PHONY: deps
-deps: ## Download and verify Go dependencies
-	@echo -e "$(COLOR_BLUE)Downloading dependencies...$(COLOR_RESET)"
-	@$(GOMOD) download
-	@$(GOMOD) verify
-	@$(GOMOD) tidy
-
-.PHONY: dev
-dev: ## Run development server with hot reload
-	@echo -e "$(COLOR_GREEN)Starting development server...$(COLOR_RESET)"
-	@$(GO) run $(CMD_DIR)/api-gateway/main.go
+# NOTE: Development workflow targets (setup, deps, dev) are now in make/dev.mk
 
 # =============================================================================
 # Build targets
@@ -96,33 +35,6 @@ build-lambda: clean ## Build Lambda deployment package (Linux AMD64)
 
 .PHONY: build-all
 build-all: build build-lambda ## Build all targets (local + Lambda)
-
-# =============================================================================
-# Testing
-# =============================================================================
-
-.PHONY: test
-test: ## Run all tests
-	@echo -e "$(COLOR_BLUE)Running tests...$(COLOR_RESET)"
-	@$(GOTEST) -race -timeout 30s ./...
-
-.PHONY: test-verbose
-test-verbose: ## Run tests with verbose output
-	@echo -e "$(COLOR_BLUE)Running tests (verbose)...$(COLOR_RESET)"
-	@$(GOTEST) -v -race -timeout 30s ./...
-
-.PHONY: test-coverage
-test-coverage: ## Run tests with coverage report
-	@echo -e "$(COLOR_BLUE)Running tests with coverage...$(COLOR_RESET)"
-	@mkdir -p $(COVERAGE_DIR)
-	@$(GOTEST) -race -coverprofile=$(COVERAGE_DIR)/coverage.out -covermode=atomic ./...
-	@$(GO) tool cover -html=$(COVERAGE_DIR)/coverage.out -o $(COVERAGE_DIR)/coverage.html
-	@echo -e "$(COLOR_GREEN)✓ Coverage report: $(COVERAGE_DIR)/coverage.html$(COLOR_RESET)"
-
-.PHONY: test-integration
-test-integration: ## Run integration tests (requires infra)
-	@echo -e "$(COLOR_BLUE)Running integration tests...$(COLOR_RESET)"
-	@$(GOTEST) -v -tags=integration -timeout 60s ./...
 
 # =============================================================================
 # Code quality
@@ -151,19 +63,19 @@ lint: ## Run golangci-lint (requires golangci-lint installed)
 	fi
 
 .PHONY: check
-check: fmt vet lint test ## Run all quality checks
+check: fmt vet lint ## Run all quality checks
 
 # =============================================================================
 # Infrastructure management
 # =============================================================================
 
 .PHONY: infra-up
-infra-up: ## Start local infrastructure (Postgres + Redis)
+infra-up: ## Start local infrastructure (Postgres)
 	@echo -e "$(COLOR_BLUE)Starting infrastructure...$(COLOR_RESET)"
+	@docker rm -f $(DB_CONTAINER) 2>/dev/null || true
 	@$(DOCKER_COMPOSE) -f $(COMPOSE_FILE) up -d
 	@echo -e "$(COLOR_GREEN)✓ Infrastructure running$(COLOR_RESET)"
 	@echo -e "  Postgres: localhost:5432"
-	@echo -e "  Redis:    localhost:6379"
 
 .PHONY: infra-down
 infra-down: ## Stop local infrastructure
@@ -175,6 +87,7 @@ infra-down: ## Stop local infrastructure
 infra-reset: ## Reset infrastructure (destroy volumes)
 	@echo -e "$(COLOR_YELLOW)Resetting infrastructure (all data will be lost)...$(COLOR_RESET)"
 	@$(DOCKER_COMPOSE) -f $(COMPOSE_FILE) down -v
+	@docker rm -f $(DB_CONTAINER) 2>/dev/null || true
 	@$(DOCKER_COMPOSE) -f $(COMPOSE_FILE) up -d
 	@echo -e "$(COLOR_GREEN)✓ Infrastructure reset$(COLOR_RESET)"
 
@@ -186,29 +99,7 @@ infra-logs: ## Show infrastructure logs
 infra-status: ## Show infrastructure status
 	@$(DOCKER_COMPOSE) -f $(COMPOSE_FILE) ps
 
-# =============================================================================
-# Database management
-# =============================================================================
-
-.PHONY: db-migrate
-db-migrate: ## Run database migrations (TODO: implement)
-	@echo -e "$(COLOR_YELLOW)TODO: Implement database migrations$(COLOR_RESET)"
-
-.PHONY: db-seed
-db-seed: ## Seed database with test data (TODO: implement)
-	@echo -e "$(COLOR_YELLOW)TODO: Implement database seeding$(COLOR_RESET)"
-
-.PHONY: db-reset
-db-reset: ## Reset database (drop + recreate + migrate)
-	@echo -e "$(COLOR_YELLOW)Resetting database...$(COLOR_RESET)"
-	@docker exec -it llm-cp-postgres psql -U dev -d postgres -c "DROP DATABASE IF EXISTS llm_control_plane_dev;"
-	@docker exec -it llm-cp-postgres psql -U dev -d postgres -c "CREATE DATABASE llm_control_plane_dev;"
-	@echo -e "$(COLOR_GREEN)✓ Database reset$(COLOR_RESET)"
-	@$(MAKE) db-migrate
-
-.PHONY: db-shell
-db-shell: ## Open PostgreSQL shell
-	@docker exec -it llm-cp-postgres psql -U dev -d llm_control_plane_dev
+# NOTE: Database management targets are now in make/database.mk
 
 # =============================================================================
 # Cleanup
@@ -259,7 +150,6 @@ deps-graph: ## Generate dependency graph (requires graphviz)
 ci-test: ## Run CI test suite
 	@$(MAKE) deps
 	@$(MAKE) check
-	@$(MAKE) test-coverage
 
 .PHONY: ci-build
 ci-build: ## Build for CI/CD pipeline

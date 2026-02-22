@@ -1,0 +1,27 @@
+{
+  "CORSRules": [
+    {
+      "AllowedOrigins": [
+        "https://sandbox.llm-cp.example.com",
+        "https://localhost:5173",
+        "https://localhost:3000"
+      ],
+      "AllowedMethods": [
+        "GET",
+        "POST",
+        "PUT",
+        "DELETE",
+        "HEAD"
+      ],
+      "AllowedHeaders": [
+        "*"
+      ],
+      "ExposeHeaders": [
+        "ETag",
+        "Content-Length",
+        "Content-Type"
+      ],
+      "MaxAgeSeconds": 3600
+    }
+  ]
+}

@@ -480,9 +480,9 @@ services:
     image: postgres:16-alpine
     ports: ["5432:5432"]
     environment:
-      POSTGRES_DB: llm_control_plane_dev
+      POSTGRES_DB: audit
       POSTGRES_USER: dev
-      POSTGRES_PASSWORD: dev
+      POSTGRES_PASSWORD: audit_password
   
   redis:
     image: redis:7-alpine

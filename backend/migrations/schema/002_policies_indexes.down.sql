@@ -1,0 +1,12 @@
+-- Drop additional policy indexes
+DROP INDEX IF EXISTS idx_policies_updated_at;
+DROP INDEX IF EXISTS idx_policies_org_app_type;
+DROP INDEX IF EXISTS idx_policies_active_priority;
+DROP INDEX IF EXISTS idx_policies_config_provider;
+DROP INDEX IF EXISTS idx_policies_config_enabled;
+DROP INDEX IF EXISTS idx_policies_config_gin;
+DROP INDEX IF EXISTS idx_policies_org_priority;
+DROP INDEX IF EXISTS idx_policies_org_type_enabled;
+DROP INDEX IF EXISTS idx_policies_org_user;
+DROP INDEX IF EXISTS idx_policies_org_app;
+DROP INDEX IF EXISTS idx_policies_org_wide;

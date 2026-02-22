@@ -23,4 +23,15 @@ coverage.out
 # Secrets (never commit real secrets)
 .env
 .env.*
+!.env.example
+
+# TLS certs (generated locally via make certs)
+certs/
+
+# Build artifacts
+*.exe
+tmp/
+
+# Frontend dependencies
+node_modules/
 

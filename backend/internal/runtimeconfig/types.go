@@ -14,7 +14,6 @@ type Config struct {
 	Environment string
 	HTTPAddr    string
 	Database    DatabaseConfig
-	Redis       RedisConfig
 	Providers   ProvidersConfig
 }
 
@@ -23,13 +22,6 @@ type DatabaseConfig struct {
 	URL             string
 	MaxConnections  int
 	ConnMaxLifetime int
-}
-
-// RedisConfig holds Redis connection settings.
-type RedisConfig struct {
-	URL      string
-	Password string
-	DB       int
 }
 
 // ProvidersConfig holds LLM provider credentials.

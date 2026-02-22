@@ -1,0 +1,32 @@
+name: Deploy Sandbox Environment
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      reset_database:
+        description: "⚠️ DANGER: Reset database (DROP ALL TABLES) before deployment"
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  deploy:
+    name: Deploy to Sandbox
+    permissions:
+      id-token: write # Required for AWS authentication via OIDC
+      contents: read
+    uses: ./.github/workflows/infra.yml
+    with:
+      instance_name: audit-sandbox
+      web_domain: sandbox.llm-cp.example.com # TODO: Update with your actual domain
+      api_domain: api.sandbox.llm-cp.example.com # TODO: Update with your actual domain
+      environment: sandbox
+      reset_database: ${{ github.event.inputs.reset_database == true && 'true' || 'false' }}
+      aurora_min_capacity: "0.5"
+      aurora_max_capacity: "2"
+      login_position: "CENTER"
+    secrets:
+      aws_role_arn: ${{ secrets.AWS_ROLE_ARN }}

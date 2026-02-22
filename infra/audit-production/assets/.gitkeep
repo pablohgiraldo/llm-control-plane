@@ -1,0 +1,9 @@
+# Cognito Branding Assets - RC Environment
+
+Place your RC environment branding assets in this directory:
+
+- `logo.png` - Logo for Cognito hosted UI (200x200px PNG)
+- `favicon.ico` - Favicon (32x32px ICO)
+- `background.png` - Background image (1920x1080px PNG)
+
+See `../sandbox-llm-cp/assets/.gitkeep` for detailed specifications.
