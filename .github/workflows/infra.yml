@@ -90,7 +90,7 @@ jobs:
         id: auth
         with:
           name: auth-${{ inputs.instance_name }}
-          callback_urls: "https://${{ inputs.api_domain }}/oauth2/idpresponse,https://localhost:3000/oauth2/idpresponse"
+          callback_urls: "https://${{ inputs.api_domain }}/oauth2/idpresponse,https://localhost:8443/oauth2/idpresponse"
           logout_urls: "https://${{ inputs.web_domain }},https://localhost:5173"
           enable_managed_login_branding: true
           allowed_domains: ${{ inputs.allowed_domains }}
